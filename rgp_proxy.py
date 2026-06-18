@@ -380,10 +380,10 @@ class Handler(BaseHTTPRequestHandler):
         send_json(self, 404, {'error': f'Unknown: {path}'})
 
 if __name__ == '__main__':
-    port = 5001
-    server = HTTPServer(('127.0.0.1', port), Handler)
+    port = int(os.environ.get('PORT', 5001))
+    server = HTTPServer(('0.0.0.0', port), Handler)
     print('OperatorOS RGP Proxy v3.1')
-    print(f'Running on http://127.0.0.1:{port}')
+    print(f'Running on port {port}')
     print('Credentials loaded from rgp_proxy_config.json')
     print('Keep this window open while using OperatorOS.')
     print('---')
