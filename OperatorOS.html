@@ -261,6 +261,7 @@ tr:hover td{background:var(--surf2)}
 <!-- MAIN -->
 <div id="wrap">
   <div id="sidebar">
+    <div class="sb-item" onclick="goHome()">🏠 Home</div>
     <div class="sb-sect">Operations</div>
     <div class="sb-item" onclick="nav('actions',this)">⚡ Actions <span class="sb-badge" id="sb-actions">—</span></div>
     <div class="sb-item" onclick="nav('deadtime',this)">⏱ Dead Time</div>
@@ -276,7 +277,6 @@ tr:hover td{background:var(--surf2)}
     <div class="sb-sect">System</div>
     <div class="sb-item" onclick="nav('connect',this)">🔌 Connections</div>
     <div class="sb-item" onclick="nav('settings',this)">⚙️ Settings</div>
-    <div class="sb-item" onclick="goHome()">🏠 Home</div>
   </div>
 
   <div id="main">
@@ -719,10 +719,13 @@ tr:hover td{background:var(--surf2)}
     <!-- INTELLIGENCE -->
     <div class="page" id="pg-intel">
       <div class="pg-head">
-        <div><div class="pg-title">📈 Revenue Intelligence</div><div class="pg-sub">AI-spotted patterns from live RGP data</div></div>
+        <div><div class="pg-title">📈 Revenue Intelligence</div><div class="pg-sub">This month vs last month — live from RGP</div></div>
         <div class="pg-actions"><button class="btn btn-pri btn-sm" onclick="runIntel()">⟳ Run Analysis</button></div>
       </div>
-      <div id="intel-body"><div class="empty"><div class="empty-icon">📈</div>Sync RGP first, then Run Analysis to generate AI insights</div></div>
+
+      <div class="kpis" id="intel-trend-kpis"></div>
+
+      <div id="intel-cards"><div class="empty"><div class="empty-icon">📈</div>Click Run Analysis to generate insights</div></div>
     </div>
 
     <!-- SOCIAL -->
@@ -1004,6 +1007,14 @@ function se(id,val){ var el=document.getElementById(id); if(el) el.value=val||''
 // NAVIGATION
 // ═══════════════════════════════════════════════════
 function nav(name, el){
+  if(name==='staff' && !STAFF_TILE_UNLOCKED){
+    var pin = prompt('Enter owner PIN to view Staff:');
+    if(pin !== S.pinOwner){
+      showToast('Incorrect PIN','er');
+      return;
+    }
+    STAFF_TILE_UNLOCKED = true;
+  }
   document.querySelectorAll('.page').forEach(function(p){p.classList.remove('on');});
   document.querySelectorAll('.sb-item').forEach(function(s){s.classList.remove('on');});
   var pg = document.getElementById('pg-'+name);
@@ -1011,6 +1022,7 @@ function nav(name, el){
   if(el) el.classList.add('on');
   document.getElementById('sidebar').classList.add('open');
 }
+var STAFF_TILE_UNLOCKED = false;
 
 function goHome(){
   document.querySelectorAll('.page').forEach(function(p){p.classList.remove('on');});
@@ -1517,14 +1529,6 @@ function filterStaff(f, el){
 }
 
 function staffShowTab(name, el){
-  if(name==='laborcost' && !LC_UNLOCKED){
-    var pin = prompt('Enter owner PIN to view Labor Cost:');
-    if(pin !== S.pinOwner){
-      showToast('Incorrect PIN','er');
-      return;
-    }
-    LC_UNLOCKED = true;
-  }
   document.querySelectorAll('.staff-tab').forEach(function(t){t.classList.remove('on');});
   document.querySelectorAll('.staff-tab-btn').forEach(function(b){b.style.borderColor='';b.style.color='';});
   if(el){el.style.borderColor='var(--acc)';el.style.color='var(--acc)';}
@@ -1532,7 +1536,6 @@ function staffShowTab(name, el){
   if(tab)tab.classList.add('on');
   if(name==='laborcost')lcRender();
 }
-var LC_UNLOCKED = false;
 
 // ═══════════════════════════════════════════════════
 // LABOR COST (Staff tile only — real wages, locked here)
@@ -1632,18 +1635,87 @@ function lcRender(){
 // ═══════════════════════════════════════════════════
 function runIntel(){
   if(!S.claude){ showToast('Add Claude API key in Settings','wa'); return; }
-  if(!DATA.members.length && !DATA.bookings.length){ showToast('Sync RGP data first','wa'); syncAll(); return; }
-  document.getElementById('intel-body').innerHTML = '<div class="loading"><div class="loading-spin"></div>AI analyzing your live RGP data...</div>';
-  var ctx = buildAIContext();
-  aiCall('You are a gym operations consultant. Analyze this gym data and provide:\n1. Top 3 revenue opportunities with $ estimates\n2. Top 3 risks with urgency level\n3. One dead time insight with a specific fix\n4. Member retention summary\n\nBe specific, use the actual numbers from the data.\n\nData:\n'+ctx)
-    .then(function(text){
-      document.getElementById('intel-body').innerHTML = '<div class="sec"><div class="sec-head">AI Revenue Intelligence Analysis</div>'
-        +'<div class="sec-body" style="white-space:pre-wrap;font-size:13px;line-height:1.8;color:var(--txt)">'+text+'</div></div>';
+  document.getElementById('intel-cards').innerHTML = '<div class="loading"><div class="loading-spin"></div>Pulling this month vs last month from RGP...</div>';
+
+  fetch(proxyURL('/intel/monthly')+rgpParams())
+    .then(function(r){return r.json();})
+    .then(function(trend){
+      renderIntelTrend(trend);
+      document.getElementById('intel-cards').innerHTML = '<div class="loading"><div class="loading-spin"></div>AI analyzing patterns...</div>';
+      var ctx = buildAIContext(trend);
+      return aiCall('You are a gym operations consultant. Respond ONLY with valid JSON, no markdown, no preamble, in exactly this shape:\n'
+        +'{"opportunities":[{"title":"...","detail":"...","value":"$X"}],"risks":[{"title":"...","detail":"...","urgency":"high|medium|low"}],"dead_time":{"title":"...","detail":"...","fix":"..."},"retention":{"title":"...","detail":"...","at_risk_count":N}}\n'
+        +'Provide exactly 3 opportunities and 3 risks. Use the actual numbers from this data, especially the month-over-month change. Be specific and concise (1-2 sentences per detail).\n\nData:\n'+ctx);
     })
-    .catch(function(){ document.getElementById('intel-body').innerHTML = '<div class="empty"><div class="empty-icon">📈</div>AI analysis failed — check Claude API key in Settings</div>'; });
+    .then(function(text){
+      var parsed;
+      try{
+        var clean = text.replace(/```json|```/g,'').trim();
+        parsed = JSON.parse(clean);
+      }catch(e){
+        document.getElementById('intel-cards').innerHTML = '<div class="empty"><div class="empty-icon">📈</div>AI returned an unexpected format — try again</div>';
+        return;
+      }
+      renderIntelCards(parsed);
+    })
+    .catch(function(){ document.getElementById('intel-cards').innerHTML = '<div class="empty"><div class="empty-icon">📈</div>Analysis failed — check Claude API key and RGP connection in Settings</div>'; });
 }
 
-function buildAIContext(){
+function renderIntelTrend(t){
+  var el = document.getElementById('intel-trend-kpis');
+  if(!el || !t.this_month) return;
+  var revPct = t.revenue_change_pct;
+  var revCol = revPct===null ? 'var(--muted)' : revPct>=0 ? 'var(--grn)' : 'var(--red)';
+  var revArrow = revPct===null ? '' : revPct>=0 ? '▲' : '▼';
+  var bookPct = t.booking_change_pct;
+  var bookCol = bookPct===null ? 'var(--muted)' : bookPct>=0 ? 'var(--grn)' : 'var(--red)';
+  var bookArrow = bookPct===null ? '' : bookPct>=0 ? '▲' : '▼';
+  el.innerHTML =
+    '<div class="kpi"><div class="kpi-label">'+t.this_month.label+' Revenue</div><div class="kpi-val b">$'+t.this_month.revenue.toLocaleString()+'</div>'
+      +'<div class="kpi-sub" style="color:'+revCol+'">'+revArrow+' '+(revPct!==null?Math.abs(revPct)+'% vs '+t.last_month.label:'no prior data')+'</div></div>'
+    +'<div class="kpi"><div class="kpi-label">'+t.last_month.label+' Revenue</div><div class="kpi-val g">$'+t.last_month.revenue.toLocaleString()+'</div><div class="kpi-sub">'+t.last_month.invoices+' invoices</div></div>'
+    +'<div class="kpi"><div class="kpi-label">Bookings '+t.this_month.label+'</div><div class="kpi-val b">'+t.this_month.bookings+'</div>'
+      +'<div class="kpi-sub" style="color:'+bookCol+'">'+bookArrow+' '+(bookPct!==null?Math.abs(bookPct)+'% vs last month':'no prior data')+'</div></div>'
+    +'<div class="kpi"><div class="kpi-label">Cancellations</div><div class="kpi-val y">'+t.this_month.cancellations+'</div><div class="kpi-sub">this month</div></div>';
+}
+
+function renderIntelCards(p){
+  var h = '';
+  if(p.opportunities && p.opportunities.length){
+    h += '<div class="sec"><div class="sec-head">💰 Revenue Opportunities</div><div class="sec-body">'
+      + p.opportunities.map(function(o){
+          return '<div style="padding:12px 0;border-bottom:1px solid var(--bdr)">'
+            +'<div style="display:flex;justify-content:space-between;gap:10px"><div style="font-weight:700;font-size:13px">'+o.title+'</div><div style="font-weight:700;color:var(--grn);font-size:13px;flex-shrink:0">'+(o.value||'')+'</div></div>'
+            +'<div style="font-size:12px;color:var(--muted);margin-top:3px">'+o.detail+'</div></div>';
+        }).join('')
+      + '</div></div>';
+  }
+  if(p.risks && p.risks.length){
+    h += '<div class="sec"><div class="sec-head">⚠️ Risks</div><div class="sec-body">'
+      + p.risks.map(function(r){
+          var col = r.urgency==='high'?'var(--red)':r.urgency==='medium'?'var(--yel)':'var(--muted)';
+          return '<div style="padding:12px 0;border-bottom:1px solid var(--bdr)">'
+            +'<div style="display:flex;justify-content:space-between;gap:10px"><div style="font-weight:700;font-size:13px">'+r.title+'</div>'
+            +'<span style="font-size:10px;font-weight:700;color:'+col+';background:'+col+'20;padding:2px 8px;border-radius:20px;flex-shrink:0;text-transform:uppercase">'+(r.urgency||'')+'</span></div>'
+            +'<div style="font-size:12px;color:var(--muted);margin-top:3px">'+r.detail+'</div></div>';
+        }).join('')
+      + '</div></div>';
+  }
+  if(p.dead_time){
+    h += '<div class="sec"><div class="sec-head">⏱ Dead Time Insight</div><div class="sec-body" style="padding:14px">'
+      +'<div style="font-weight:700;font-size:13px;margin-bottom:4px">'+p.dead_time.title+'</div>'
+      +'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">'+p.dead_time.detail+'</div>'
+      +'<div style="font-size:12px;color:var(--acc);font-weight:700">Fix: '+p.dead_time.fix+'</div></div></div>';
+  }
+  if(p.retention){
+    h += '<div class="sec"><div class="sec-head">👤 Member Retention</div><div class="sec-body" style="padding:14px">'
+      +'<div style="font-weight:700;font-size:13px;margin-bottom:4px">'+p.retention.title+(p.retention.at_risk_count!==undefined?' — '+p.retention.at_risk_count+' at risk':'')+'</div>'
+      +'<div style="font-size:12px;color:var(--muted)">'+p.retention.detail+'</div></div></div>';
+  }
+  document.getElementById('intel-cards').innerHTML = h || '<div class="empty"><div class="empty-icon">📈</div>No insights generated</div>';
+}
+
+function buildAIContext(trend){
   return JSON.stringify({
     gym: S.gym, location: S.location,
     active_members: document.getElementById('m-active').textContent,
@@ -1652,8 +1724,8 @@ function buildAIContext(){
     checkins_today: DATA.dashboard.checkins_today || 0,
     active_now: DATA.dashboard.active_now || 0,
     revenue_30d: DATA.dashboard.revenue_30d || 0,
+    month_over_month: trend,
     programs: DATA.bookings.slice(0,20).map(function(p){return {name:p.name,bookings:p.bookings,revenue:p.revenue,cancelled:p.cancelled};}),
-    wiw_shifts: DATA.wiwShifts.length,
   }, null, 2);
 }
 

@@ -313,6 +313,76 @@ class Handler(BaseHTTPRequestHandler):
                 send_json(self, s, {'error': d, 'path_tried': f'/v1/invoices/facility/{fc}'})
             return
 
+        # INTELLIGENCE — this month vs last month, for trend comparison
+        if path == '/intel/monthly':
+            today = datetime.date.today()
+            this_month_start = today.replace(day=1)
+            last_month_end = this_month_start - datetime.timedelta(days=1)
+            last_month_start = last_month_end.replace(day=1)
+
+            s1, d1 = rgp_get(f'/v1/invoices/facility/{fc}', u, k, {
+                'startDate': last_month_start.isoformat(),
+                'endDate':   today.isoformat(),
+                'orderBy':   'invoicePostDate',
+                'orderDir':  'desc',
+                'pageSize':  500,
+            })
+            s2, d2 = rgp_get(f'/v1/bookings/facility/{fc}', u, k, {
+                'startDate': last_month_start.isoformat(),
+                'endDate':   today.isoformat(),
+                'orderBy':   'bookingDate',
+                'orderDir':  'desc',
+                'pageSize':  500,
+            })
+
+            this_month_rev, last_month_rev = 0.0, 0.0
+            this_month_inv, last_month_inv = 0, 0
+            if s1 == 200:
+                raw = d1.get('invoices', d1.get('invoice', d1.get('data', [])))
+                for i in raw:
+                    if i.get('voidedInvoice', 0):
+                        continue
+                    dt = (i.get('invoicePostDate') or '')[:10]
+                    amt = float(i.get('amount', 0) or 0)
+                    if dt >= this_month_start.isoformat():
+                        this_month_rev += amt; this_month_inv += 1
+                    elif dt >= last_month_start.isoformat():
+                        last_month_rev += amt; last_month_inv += 1
+
+            this_month_book, last_month_book = 0, 0
+            this_month_cancel, last_month_cancel = 0, 0
+            if s2 == 200:
+                raw2 = d2.get('bookings', d2.get('booking', d2.get('data', [])))
+                for b in raw2:
+                    dt = (b.get('bookingDate') or '')[:10]
+                    cancelled = b.get('cancelled') or b.get('isCancelled')
+                    if dt >= this_month_start.isoformat():
+                        this_month_book += 1
+                        if cancelled: this_month_cancel += 1
+                    elif dt >= last_month_start.isoformat():
+                        last_month_book += 1
+                        if cancelled: last_month_cancel += 1
+
+            send_json(self, 200, {
+                'this_month': {
+                    'label': today.strftime('%B %Y'),
+                    'revenue': round(this_month_rev, 2),
+                    'invoices': this_month_inv,
+                    'bookings': this_month_book,
+                    'cancellations': this_month_cancel,
+                },
+                'last_month': {
+                    'label': last_month_start.strftime('%B %Y'),
+                    'revenue': round(last_month_rev, 2),
+                    'invoices': last_month_inv,
+                    'bookings': last_month_book,
+                    'cancellations': last_month_cancel,
+                },
+                'revenue_change_pct': round(((this_month_rev - last_month_rev) / last_month_rev * 100), 1) if last_month_rev else None,
+                'booking_change_pct': round(((this_month_book - last_month_book) / last_month_book * 100), 1) if last_month_book else None,
+            })
+            return
+
         # CHECKINS ACTIVE — Nicole confirmed: /v1/checkins/active/facility/{facilityCode}
         if path == '/checkins/active':
             s, d = rgp_get(f'/v1/checkins/active/facility/{fc}', u, k)
