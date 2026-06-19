@@ -119,6 +119,7 @@ class Handler(BaseHTTPRequestHandler):
                 send_json(self, 401, {'error': 'Missing WIW email or password'})
                 return
             try:
+                print(f'  WIW → logging in as {email}')
                 login_req = urllib.request.Request(
                     'https://api.login.wheniwork.com/login',
                     data=json.dumps({'email': email, 'password': password}).encode(),
@@ -128,10 +129,13 @@ class Handler(BaseHTTPRequestHandler):
                 ctx = ssl.create_default_context()
                 with urllib.request.urlopen(login_req, timeout=15, context=ctx) as resp:
                     login_data = json.loads(resp.read().decode())
+                print(f'  WIW ← login response keys: {list(login_data.keys())}')
                 token = login_data.get('token') or (login_data.get('login') or {}).get('token')
                 if not token:
+                    print(f'  WIW ✗ no token in response: {login_data}')
                     send_json(self, 401, {'error': 'WIW login failed', 'detail': login_data})
                     return
+                print(f'  WIW ✓ got token, fetching shifts')
 
                 start = datetime.date.today().isoformat()
                 end   = (datetime.date.today() + datetime.timedelta(days=days)).isoformat()
@@ -141,10 +145,14 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 with urllib.request.urlopen(shifts_req, timeout=15, context=ctx) as resp2:
                     shifts_data = json.loads(resp2.read().decode())
+                print(f'  WIW ← {len(shifts_data.get("shifts", []))} shifts')
                 send_json(self, 200, {'shifts': shifts_data.get('shifts', []), 'total': len(shifts_data.get('shifts', []))})
             except urllib.error.HTTPError as e:
-                send_json(self, e.code, {'error': 'WIW request failed', 'detail': e.read().decode()[:300]})
+                detail = e.read().decode()[:300]
+                print(f'  WIW ✗ HTTPError {e.code}: {detail}')
+                send_json(self, e.code, {'error': 'WIW request failed', 'detail': detail})
             except Exception as e:
+                print(f'  WIW ✗ Exception: {type(e).__name__}: {str(e)}')
                 send_json(self, 500, {'error': 'WIW proxy error', 'detail': str(e)})
             return
 
