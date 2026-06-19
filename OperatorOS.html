@@ -1787,16 +1787,16 @@ function removePost(id){ SOCIAL_QUEUE=SOCIAL_QUEUE.filter(function(x){return x.i
 // AI HELPERS
 // ═══════════════════════════════════════════════════
 function aiCall(prompt){
-  return fetch('https://api.anthropic.com/v1/messages',{
+  return fetch(proxyURL('/ai/call'),{
     method:'POST',
-    headers:{'Content-Type':'application/json','x-api-key':S.claude,'anthropic-version':'2023-06-01'},
-    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,messages:[{role:'user',content:prompt}]})
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({api_key:S.claude, prompt:prompt, model:'claude-sonnet-4-6', max_tokens:1000})
   })
   .then(function(r){return r.json();})
   .then(function(d){
-    var t = d.content&&d.content[0]&&d.content[0].text;
-    if(!t) throw new Error(d.error&&d.error.message||'No response');
-    return t;
+    if(d.error) throw new Error(d.error);
+    if(!d.text) throw new Error('No response');
+    return d.text;
   });
 }
 

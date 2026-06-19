@@ -94,6 +94,54 @@ class Handler(BaseHTTPRequestHandler):
         for k, v in CORS.items(): self.send_header(k, v)
         self.end_headers()
 
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+
+        if path == '/ai/call':
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+                body = json.loads(self.rfile.read(length).decode())
+                api_key = body.get('api_key', '')
+                prompt = body.get('prompt', '')
+                model = body.get('model', 'claude-sonnet-4-6')
+                max_tokens = body.get('max_tokens', 1000)
+                if not api_key or not prompt:
+                    send_json(self, 400, {'error': 'Missing api_key or prompt'})
+                    return
+
+                ai_req = urllib.request.Request(
+                    'https://api.anthropic.com/v1/messages',
+                    data=json.dumps({
+                        'model': model,
+                        'max_tokens': max_tokens,
+                        'messages': [{'role': 'user', 'content': prompt}]
+                    }).encode(),
+                    headers={
+                        'Content-Type': 'application/json',
+                        'x-api-key': api_key,
+                        'anthropic-version': '2023-06-01'
+                    },
+                    method='POST'
+                )
+                ctx = ssl.create_default_context()
+                with urllib.request.urlopen(ai_req, timeout=30, context=ctx) as resp:
+                    ai_data = json.loads(resp.read().decode())
+                text = ''
+                if ai_data.get('content') and len(ai_data['content']) > 0:
+                    text = ai_data['content'][0].get('text', '')
+                send_json(self, 200, {'text': text})
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode()[:500]
+                print(f'  AI ✗ HTTPError {e.code}: {detail}')
+                send_json(self, e.code, {'error': 'AI request failed', 'detail': detail})
+            except Exception as e:
+                print(f'  AI ✗ Exception: {type(e).__name__}: {str(e)}')
+                send_json(self, 500, {'error': 'AI proxy error', 'detail': str(e)})
+            return
+
+        send_json(self, 404, {'error': f'Unknown POST path: {path}'})
+
     def get_creds(self, params):
         cfg = load_config()
         u  = (params.get('api_user') or [None])[0] or cfg.get('rgp_user', '')
