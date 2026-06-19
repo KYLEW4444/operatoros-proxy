@@ -700,7 +700,7 @@ function saveSettings(){
   S.pinOwner  = v('s-pin-owner') || S.pinOwner;
   S.pinMgr    = v('s-pin-mgr')   || S.pinMgr;
 
-  var save = {gym:S.gym,location:S.location,proxy:S.proxy,rgpUser:S.rgpUser,fc1:S.fc1,fc2:S.fc2,fcActive:S.fcActive,wiwEmail:S.wiwEmail};
+  var save = {gym:S.gym,location:S.location,proxy:S.proxy,rgpUser:S.rgpUser,rgpKey:S.rgpKey,fc1:S.fc1,fc2:S.fc2,fcActive:S.fcActive,wiwEmail:S.wiwEmail,wiwPass:S.wiwPass,claude:S.claude};
   localStorage.setItem('ops_v3', JSON.stringify(save));
 
   document.getElementById('tb-gym').textContent = S.gym;
@@ -717,8 +717,8 @@ function loadSettings(){
     var saved = JSON.parse(raw);
     Object.assign(S, saved);
     se('s-gym', S.gym); se('s-loc', S.location); se('s-proxy', S.proxy);
-    se('s-rgpuser', S.rgpUser); se('s-fc1', S.fc1); se('s-fc2', S.fc2);
-    se('s-wiwmail', S.wiwEmail);
+    se('s-rgpuser', S.rgpUser); se('s-rgpkey', S.rgpKey); se('s-fc1', S.fc1); se('s-fc2', S.fc2);
+    se('s-wiwmail', S.wiwEmail); se('s-wiwpass', S.wiwPass); se('s-claude', S.claude);
     document.getElementById('s-fc-active').value = S.fcActive || '1';
     document.getElementById('tb-gym').textContent = S.gym;
   } catch(e){}
