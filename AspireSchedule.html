@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Aspire Climbing — Schedule</title>
+<style>
+:root{--bg:#0b0f1a;--surf:#131929;--surf2:#1c2438;--surf3:#243047;--bdr:rgba(255,255,255,0.08);--bdr2:rgba(255,255,255,0.15);--txt:#e8edf5;--muted:#7a8ba8;--dim:#4a5a72;--acc:#3d7eff;--grn:#22c97a;--yel:#f5a623;--red:#e24b4a;--pur:#9b6dff;--r:6px;--r2:10px;--r3:14px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--txt);font-size:14px;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.app{display:flex;flex-direction:column;height:100vh}
+.topbar{background:var(--surf);border-bottom:1px solid var(--bdr);height:52px;display:flex;align-items:center;padding:0 18px;gap:10px;flex-shrink:0;z-index:50}
+.tb-logo{font-size:16px;font-weight:800}.tb-logo span{color:var(--acc)}
+.tb-gym{background:var(--surf2);border:1px solid var(--bdr);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--muted)}
+.tb-sp{flex:1}
+.btn{padding:7px 14px;border-radius:var(--r);font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--bdr2);background:var(--surf2);color:var(--txt);transition:all .15s;display:inline-flex;align-items:center;gap:5px}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn-pri{background:var(--acc);color:#fff;border-color:var(--acc)}.btn-pri:hover{background:#2960d4;color:#fff}
+.btn-grn{background:var(--grn);color:#000;border-color:var(--grn)}.btn-grn:hover{background:#17a35f;color:#000}
+.btn-sm{padding:4px 10px;font-size:11px}
+.btn-xs{padding:2px 8px;font-size:10px}
+.body{display:flex;flex:1;overflow:hidden}
+.sb{width:190px;background:var(--surf);border-right:1px solid var(--bdr);padding:8px 0;flex-shrink:0;overflow-y:auto}
+.sb-sect{padding:10px 14px 3px;font-size:10px;font-weight:700;color:var(--dim);letter-spacing:.1em;text-transform:uppercase}
+.sb-item{padding:8px 16px;cursor:pointer;font-size:13px;color:var(--muted);border-left:2px solid transparent;display:flex;align-items:center;justify-content:space-between;transition:all .12s}
+.sb-item:hover{color:var(--txt);background:var(--surf2)}
+.sb-item.on{color:var(--txt);background:var(--surf2);border-left-color:var(--acc)}
+.sb-badge{background:var(--red);color:#fff;border-radius:10px;padding:1px 5px;font-size:10px;font-weight:700}
+.main{flex:1;overflow-y:auto;padding:20px}
+.page{display:none}.page.on{display:block}
+.wnav{display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.wlabel{font-size:16px;font-weight:800;flex:1}
+.grid-scroll{overflow-x:auto;border:1px solid var(--bdr);border-radius:var(--r2)}
+.sched-grid{display:grid;gap:1px;background:var(--bdr)}
+.g-corner{background:var(--surf2)}
+.g-day{background:var(--surf2);padding:8px;text-align:center;font-size:11px;font-weight:700;color:var(--muted)}
+.g-day.today{color:var(--acc)}
+.g-day-sub{font-size:10px;color:var(--dim);font-weight:400}
+.g-staff{background:var(--surf);padding:8px 10px;display:flex;align-items:center;gap:8px;min-height:52px;cursor:pointer}
+.g-staff:hover{background:var(--surf2)}
+.g-av{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.g-cell{background:var(--surf);padding:3px;min-height:52px;cursor:pointer;position:relative;transition:background .1s}
+.g-cell:hover{background:var(--surf2)}
+.g-cell .plus{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--dim);opacity:.4}
+.shift{border-radius:var(--r);padding:3px 6px;font-size:10px;font-weight:700;cursor:pointer;margin-bottom:2px;position:relative;border-left:3px solid transparent}
+.shift:hover{opacity:.8}
+.shift-del{position:absolute;top:1px;right:2px;background:rgba(0,0,0,.3);border:none;color:inherit;border-radius:2px;width:14px;height:14px;font-size:9px;cursor:pointer;display:none;align-items:center;justify-content:center;padding:0}
+.shift:hover .shift-del{display:flex}
+.p-fl{background:#1d4ed820;color:#3d7eff;border-left-color:#3d7eff}
+.p-dk{background:#16a34a20;color:#22c97a;border-left-color:#22c97a}
+.p-co{background:#7c3aed20;color:#9b6dff;border-left-color:#9b6dff}
+.p-pt{background:#92400e20;color:#f5a623;border-left-color:#f5a623}
+.p-cm{background:#0e749020;color:#00c2e0;border-left-color:#00c2e0}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;display:none;align-items:center;justify-content:center}
+.overlay.on{display:flex}
+.panel{background:var(--surf);border:1px solid var(--bdr2);border-radius:var(--r3);width:400px;max-height:88vh;overflow-y:auto}
+.ph{padding:14px 18px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between}
+.ph-t{font-size:15px;font-weight:800}
+.pb{padding:18px}
+.pf{padding:12px 18px;border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end}
+.field{margin-bottom:13px}
+.field label{display:block;font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em}
+.field input,.field select,.field textarea{width:100%;background:var(--surf2);border:1px solid var(--bdr2);color:var(--txt);border-radius:var(--r);padding:8px 11px;font-size:13px;outline:none;font-family:inherit;transition:border-color .15s}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--acc)}
+.frow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:16px}
+.kpi{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r2);padding:14px}
+.kl{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px}
+.kv{font-size:24px;font-weight:900}.kv.g{color:var(--grn)}.kv.r{color:var(--red)}.kv.b{color:var(--acc)}.kv.y{color:var(--yel)}
+.sec{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r2);margin-bottom:14px}
+.sh{padding:11px 16px;border-bottom:1px solid var(--bdr);font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:space-between}
+.sb2{padding:16px}
+.ts-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--bdr)}
+.ts-row:last-child{border-bottom:none}
+.bar-w{flex:1;height:6px;background:var(--surf2);border-radius:3px;overflow:hidden}
+.bar-f{height:100%;background:var(--acc);border-radius:3px}
+.to-row{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--bdr)}
+.to-row:last-child{border-bottom:none}
+.aa-prog{background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--r2);padding:12px;margin-bottom:8px}
+.aa-row{display:flex;align-items:center;gap:8px;margin-top:6px}
+.pill{border-radius:20px;padding:2px 8px;font-size:11px;font-weight:700;display:inline-block}
+.pill-g{background:#16a34a20;color:#4ade80}.pill-y{background:#ca8a0420;color:#fbbf24}.pill-r{background:#dc262620;color:#f87171}
+.conflict{color:var(--red);font-size:12px;margin-top:4px;display:none}
+.off-lbl{text-align:center;padding:8px;font-size:9px;color:var(--yel)}
+.toast{position:fixed;bottom:16px;right:16px;background:var(--surf);border:1px solid var(--bdr2);border-radius:var(--r2);padding:10px 14px;font-size:13px;z-index:999;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.on{opacity:1}
+.toast.ok{border-color:var(--grn);color:var(--grn)}.toast.er{border-color:var(--red);color:var(--red)}.toast.wa{border-color:var(--yel);color:var(--yel)}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="tb-logo">Aspire<span>OS</span></div>
+    <div class="tb-gym">Schedule — Milton</div>
+    <div class="tb-sp"></div>
+    <button class="btn btn-sm" onclick="showPage('timeoff')">Time off</button>
+    <button class="btn btn-sm" onclick="showPage('timesheet')">Timesheet</button>
+    <button class="btn btn-sm" onclick="showPage('autoassign')">Auto-assign</button>
+    <button class="btn btn-grn btn-sm" onclick="publishSchedule()">Publish & notify</button>
+  </div>
+  <div class="body">
+    <div class="sb">
+      <div class="sb-sect">Schedule</div>
+      <div class="sb-item on" id="sb-schedule" onclick="showPage('schedule',this)">Weekly view</div>
+      <div class="sb-item" id="sb-autoassign" onclick="showPage('autoassign',this)">Auto-assign <span class="sb-badge" id="sb-gaps-b" style="display:none"></span></div>
+      <div class="sb-sect">Staff</div>
+      <div class="sb-item" id="sb-roster" onclick="showPage('roster',this)">Staff roster</div>
+      <div class="sb-item" id="sb-timeoff" onclick="showPage('timeoff',this)">Time off <span class="sb-badge" id="sb-to-b" style="display:none"></span></div>
+      <div class="sb-item" id="sb-availability" onclick="showPage('availability',this)">Availability</div>
+      <div class="sb-sect">Reports</div>
+      <div class="sb-item" id="sb-timesheet" onclick="showPage('timesheet',this)">Timesheet</div>
+      <div class="sb-item" id="sb-laborcost" onclick="showPage('laborcost',this)">Labor cost</div>
+      <div class="sb-item" id="sb-export" onclick="showPage('export',this)">Export</div>
+    </div>
+    <div class="main">
+
+      <!-- SCHEDULE -->
+      <div class="page on" id="pg-schedule">
+        <div class="wnav">
+          <button class="btn btn-sm" onclick="cW(-1)">← Prev</button>
+          <div class="wlabel" id="wk-label">—</div>
+          <button class="btn btn-sm" onclick="cW(1)">Next →</button>
+          <button class="btn btn-sm" onclick="goToday()">Today</button>
+          <button class="btn btn-pri btn-sm" onclick="openAddShift('','')">+ Add shift</button>
+          <button class="btn btn-sm" onclick="copyPrev()">Copy prev week</button>
+        </div>
+        <div class="grid-scroll"><div class="sched-grid" id="sched-grid"></div></div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center">
+          <span style="font-size:11px;color:var(--muted)">Positions:</span>
+          <span class="shift p-fl" style="position:static;cursor:default">Floor</span>
+          <span class="shift p-dk" style="position:static;cursor:default">Desk</span>
+          <span class="shift p-co" style="position:static;cursor:default">Coach</span>
+          <span class="shift p-pt" style="position:static;cursor:default">Party</span>
+          <span class="shift p-cm" style="position:static;cursor:default">Camp</span>
+        </div>
+      </div>
+
+      <!-- ROSTER -->
+      <div class="page" id="pg-roster">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <div style="font-size:18px;font-weight:800">Staff roster</div>
+          <button class="btn btn-pri btn-sm" onclick="openStaff(null)">+ Add staff</button>
+        </div>
+        <div class="sec"><div id="roster-body" class="sb2"></div></div>
+      </div>
+
+      <!-- TIME OFF -->
+      <div class="page" id="pg-timeoff">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <div style="font-size:18px;font-weight:800">Time off</div>
+          <button class="btn btn-pri btn-sm" onclick="openTO()">+ Add request</button>
+        </div>
+        <div class="kpis">
+          <div class="kpi"><div class="kl">Pending</div><div class="kv y" id="to-pending">0</div></div>
+          <div class="kpi"><div class="kl">Approved</div><div class="kv g" id="to-approved">0</div></div>
+          <div class="kpi"><div class="kl">Upcoming</div><div class="kv b" id="to-upcoming">0</div></div>
+        </div>
+        <div class="sec" id="to-list"></div>
+      </div>
+
+      <!-- AVAILABILITY -->
+      <div class="page" id="pg-availability">
+        <div style="font-size:18px;font-weight:800;margin-bottom:16px">Staff availability</div>
+        <div class="sec">
+          <div class="sh">Select staff member
+            <select id="av-sel" onchange="renderAv()" style="background:var(--surf2);border:1px solid var(--bdr2);color:var(--txt);border-radius:var(--r);padding:5px 10px;font-size:12px;outline:none"></select>
+          </div>
+          <div class="sb2" id="av-grid"></div>
+        </div>
+      </div>
+
+      <!-- TIMESHEET -->
+      <div class="page" id="pg-timesheet">
+        <div style="font-size:18px;font-weight:800;margin-bottom:4px">Timesheet</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:16px" id="ts-period"></div>
+        <div class="kpis">
+          <div class="kpi"><div class="kl">Total hours</div><div class="kv b" id="ts-hrs">—</div></div>
+          <div class="kpi"><div class="kl">Total labor</div><div class="kv r" id="ts-lab">—</div></div>
+          <div class="kpi"><div class="kl">Staff scheduled</div><div class="kv g" id="ts-sta">—</div></div>
+          <div class="kpi"><div class="kl">Avg hrs/staff</div><div class="kv b" id="ts-avg">—</div></div>
+        </div>
+        <div class="sec"><div class="sh">Hours by staff <button class="btn btn-sm" onclick="exportTS()">Export CSV</button></div><div id="ts-body" class="sb2"></div></div>
+      </div>
+
+      <!-- LABOR COST -->
+      <div class="page" id="pg-laborcost">
+        <div style="font-size:18px;font-weight:800;margin-bottom:16px">Labor cost</div>
+        <div class="kpis">
+          <div class="kpi"><div class="kl">Weekly labor</div><div class="kv r" id="lc-tot">—</div></div>
+          <div class="kpi"><div class="kl">Avg rate</div><div class="kv b" id="lc-rate">—</div></div>
+          <div class="kpi"><div class="kl">Total shifts</div><div class="kv g" id="lc-sh">—</div></div>
+        </div>
+        <div class="sec"><div class="sh">By position</div><div class="sb2" id="lc-pos"></div></div>
+        <div class="sec"><div class="sh">By day</div><div class="sb2" id="lc-day"></div></div>
+      </div>
+
+      <!-- AUTO-ASSIGN -->
+      <div class="page" id="pg-autoassign">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <div><div style="font-size:18px;font-weight:800;margin-bottom:3px">Auto-assign</div>
+          <div style="font-size:12px;color:var(--muted)">Matches staff to programs by tier and skills</div></div>
+          <button class="btn btn-pri" onclick="runAA()">Run auto-assign</button>
+        </div>
+        <div class="kpis">
+          <div class="kpi"><div class="kl">Programs</div><div class="kv b" id="aa-p">—</div></div>
+          <div class="kpi"><div class="kl">Filled</div><div class="kv g" id="aa-f">—</div></div>
+          <div class="kpi"><div class="kl">Uncovered</div><div class="kv r" id="aa-g">—</div></div>
+          <div class="kpi"><div class="kl">Est. cost</div><div class="kv b" id="aa-c">—</div></div>
+        </div>
+        <div id="aa-results" style="text-align:center;padding:32px;color:var(--muted)">Click Run auto-assign to generate recommendations</div>
+      </div>
+
+      <!-- EXPORT -->
+      <div class="page" id="pg-export">
+        <div style="font-size:18px;font-weight:800;margin-bottom:16px">Export</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">
+          <div class="sec" style="cursor:pointer" onclick="exportTS()"><div class="sb2" style="text-align:center;padding:24px"><div style="font-size:32px;margin-bottom:8px">📊</div><div style="font-weight:700;margin-bottom:4px">Timesheet CSV</div><div style="font-size:12px;color:var(--muted)">Hours and wages per staff</div></div></div>
+          <div class="sec" style="cursor:pointer" onclick="exportSched()"><div class="sb2" style="text-align:center;padding:24px"><div style="font-size:32px;margin-bottom:8px">📅</div><div style="font-weight:700;margin-bottom:4px">Schedule CSV</div><div style="font-size:12px;color:var(--muted)">All shifts this week</div></div></div>
+          <div class="sec" style="cursor:pointer" onclick="exportLC()"><div class="sb2" style="text-align:center;padding:24px"><div style="font-size:32px;margin-bottom:8px">💰</div><div style="font-weight:700;margin-bottom:4px">Labor cost report</div><div style="font-size:12px;color:var(--muted)">Cost by position and day</div></div></div>
+          <div class="sec" style="cursor:pointer" onclick="publishSchedule()"><div class="sb2" style="text-align:center;padding:24px"><div style="font-size:32px;margin-bottom:8px">📱</div><div style="font-weight:700;margin-bottom:4px">Email staff</div><div style="font-size:12px;color:var(--muted)">Send individual schedules</div></div></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- SHIFT PANEL -->
+<div class="overlay" id="ov-shift">
+  <div class="panel">
+    <div class="ph"><div class="ph-t" id="sp-t">Add shift</div><button class="btn btn-sm" onclick="closeOv('ov-shift')">✕</button></div>
+    <div class="pb">
+      <input type="hidden" id="sh-id">
+      <div class="field"><label>Staff member</label><select id="sh-staff" onchange="chkConflict()"></select></div>
+      <div class="frow">
+        <div class="field"><label>Date</label><input type="date" id="sh-date" onchange="chkConflict()"></div>
+        <div class="field"><label>Position</label>
+          <select id="sh-pos">
+            <option value="fl">Floor</option><option value="dk">Desk</option>
+            <option value="co">Coach</option><option value="pt">Party lead</option>
+            <option value="cm">Camp</option>
+          </select>
+        </div>
+      </div>
+      <div class="frow">
+        <div class="field"><label>Start time</label><input type="time" id="sh-s" value="09:00"></div>
+        <div class="field"><label>End time</label><input type="time" id="sh-e" value="17:00"></div>
+      </div>
+      <div class="field"><label>Notes (optional)</label><input type="text" id="sh-n" placeholder="Program name, party details..."></div>
+      <div class="conflict" id="sh-conflict">This staff member already has a shift on this day</div>
+    </div>
+    <div class="pf">
+      <button class="btn btn-sm" id="sh-del" style="display:none;background:#e24b4a20;color:var(--red);border-color:var(--red);margin-right:auto" onclick="delShift()">Delete shift</button>
+      <button class="btn btn-sm" onclick="closeOv('ov-shift')">Cancel</button>
+      <button class="btn btn-pri btn-sm" onclick="saveShift()">Save shift</button>
+    </div>
+  </div>
+</div>
+
+<!-- STAFF PANEL -->
+<div class="overlay" id="ov-staff">
+  <div class="panel">
+    <div class="ph"><div class="ph-t" id="stp-t">Add staff</div><button class="btn btn-sm" onclick="closeOv('ov-staff')">✕</button></div>
+    <div class="pb">
+      <input type="hidden" id="st-id">
+      <div class="frow">
+        <div class="field"><label>First name</label><input type="text" id="st-fn" placeholder="Zack"></div>
+        <div class="field"><label>Last name</label><input type="text" id="st-ln"></div>
+      </div>
+      <div class="frow">
+        <div class="field"><label>Tier</label>
+          <select id="st-tier">
+            <option value="3">T3 — Coach</option>
+            <option value="2" selected>T2 — Operator</option>
+            <option value="1">T1 — Support</option>
+          </select>
+        </div>
+        <div class="field"><label>Wage ($/hr)</label><input type="number" id="st-wage" step="0.50" placeholder="17.50"></div>
+      </div>
+      <div class="field"><label>Email</label><input type="email" id="st-email" placeholder="name@aspireclimbing.ca"></div>
+      <div class="field"><label>Phone / WhatsApp</label><input type="tel" id="st-phone" placeholder="+1 905 555 0000"></div>
+      <div class="field"><label>Skills</label>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px">
+          <label style="font-size:13px;display:flex;gap:5px;align-items:center;color:var(--txt);text-transform:none;letter-spacing:0"><input type="checkbox" id="sk-ninja"> Ninja</label>
+          <label style="font-size:13px;display:flex;gap:5px;align-items:center;color:var(--txt);text-transform:none;letter-spacing:0"><input type="checkbox" id="sk-climb"> Climbing</label>
+          <label style="font-size:13px;display:flex;gap:5px;align-items:center;color:var(--txt);text-transform:none;letter-spacing:0"><input type="checkbox" id="sk-desk"> Desk</label>
+          <label style="font-size:13px;display:flex;gap:5px;align-items:center;color:var(--txt);text-transform:none;letter-spacing:0"><input type="checkbox" id="sk-party"> Party</label>
+          <label style="font-size:13px;display:flex;gap:5px;align-items:center;color:var(--txt);text-transform:none;letter-spacing:0"><input type="checkbox" id="sk-camp"> Camp</label>
+        </div>
+      </div>
+      <div class="field"><label>Notes / restrictions</label><textarea id="st-notes" rows="2" placeholder="e.g. No generic floor — highest cost"></textarea></div>
+    </div>
+    <div class="pf">
+      <button class="btn btn-sm" id="st-del" style="display:none;background:#e24b4a20;color:var(--red);border-color:var(--red);margin-right:auto" onclick="delStaff()">Remove staff</button>
+      <button class="btn btn-sm" onclick="closeOv('ov-staff')">Cancel</button>
+      <button class="btn btn-pri btn-sm" onclick="saveStaff()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- TIME OFF PANEL -->
+<div class="overlay" id="ov-to">
+  <div class="panel">
+    <div class="ph"><div class="ph-t">Time off request</div><button class="btn btn-sm" onclick="closeOv('ov-to')">✕</button></div>
+    <div class="pb">
+      <div class="field"><label>Staff member</label><select id="to-staff"></select></div>
+      <div class="frow">
+        <div class="field"><label>From date</label><input type="date" id="to-from"></div>
+        <div class="field"><label>To date</label><input type="date" id="to-to"></div>
+      </div>
+      <div class="field"><label>Type</label>
+        <select id="to-type">
+          <option>Vacation</option><option>Sick</option><option>Personal</option><option>Unavailable</option>
+        </select>
+      </div>
+      <div class="field"><label>Notes</label><textarea id="to-notes" rows="2"></textarea></div>
+    </div>
+    <div class="pf">
+      <button class="btn btn-sm" onclick="closeOv('ov-to')">Cancel</button>
+      <button class="btn btn-sm" style="background:#f5a62320;color:var(--yel);border-color:var(--yel)" onclick="saveTO('pending')">Save pending</button>
+      <button class="btn btn-grn btn-sm" onclick="saveTO('approved')">Approve</button>
+    </div>
+  </div>
+</div>
+
+<!-- PUBLISH PANEL -->
+<div class="overlay" id="ov-pub">
+  <div class="panel">
+    <div class="ph"><div class="ph-t">Publish & notify staff</div><button class="btn btn-sm" onclick="closeOv('ov-pub')">✕</button></div>
+    <div class="pb">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:14px">Each staff member gets their individual schedule. Add emails in Staff Roster to enable sending.</div>
+      <div id="pub-preview"></div>
+      <div class="field" style="margin-top:12px"><label>Custom message</label><textarea id="pub-msg" rows="2" placeholder="Schedule for the week — let me know if you have questions."></textarea></div>
+    </div>
+    <div class="pf">
+      <button class="btn btn-sm" onclick="closeOv('ov-pub')">Cancel</button>
+      <button class="btn btn-grn btn-sm" onclick="sendSchedules()">Send to all staff</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+var STAFF=[
+  {id:'s1',fn:'Zack',ln:'',tier:3,wage:24,email:'',phone:'',skills:['climb','desk'],notes:'No generic floor — highest cost'},
+  {id:'s2',fn:'Joshua',ln:'',tier:3,wage:22,email:'',phone:'',skills:['climb','desk'],notes:'No routine support without program'},
+  {id:'s3',fn:'Paige',ln:'',tier:3,wage:20,email:'',phone:'',skills:['climb','desk'],notes:'Not on opening-only shifts'},
+  {id:'s4',fn:'Abbey Lynn',ln:'',tier:3,wage:18,email:'',phone:'',skills:['ninja','climb','desk'],notes:'Not on desk-only shifts'},
+  {id:'s5',fn:'Nick',ln:'',tier:3,wage:18.5,email:'',phone:'',skills:['ninja','climb','desk'],notes:'Not wasted without a program'},
+  {id:'s6',fn:'Jen',ln:'',tier:3,wage:20,email:'',phone:'',skills:['climb','desk'],notes:'No generic floor shifts'},
+  {id:'s7',fn:'Ava K',ln:'',tier:3,wage:17.6,email:'',phone:'',skills:['climb','desk'],notes:'Not on routine floor'},
+  {id:'s8',fn:'David',ln:'',tier:2,wage:16.6,email:'',phone:'',skills:['ninja','climb','desk','party','camp'],notes:'Never sole T3 coach'},
+  {id:'s9',fn:'Erin G',ln:'',tier:2,wage:16.6,email:'',phone:'',skills:['ninja','climb','party','camp'],notes:'Never sole T3 instructor'},
+  {id:'s10',fn:'Neelya',ln:'',tier:2,wage:17.6,email:'',phone:'',skills:['climb','desk','party'],notes:'Not for ninja programs'},
+  {id:'s11',fn:'Maxwell',ln:'',tier:2,wage:17.6,email:'',phone:'',skills:['desk'],notes:'Desk only — no coaching'},
+  {id:'s12',fn:'Tanner',ln:'',tier:1,wage:16.6,email:'',phone:'',skills:['ninja','camp'],notes:'Ninja only'},
+  {id:'s13',fn:'Dax',ln:'',tier:1,wage:16.6,email:'',phone:'',skills:['ninja','camp'],notes:'Ninja floor only'},
+  {id:'s14',fn:'Brooklyn',ln:'',tier:1,wage:17.6,email:'',phone:'',skills:['ninja','climb'],notes:'No desk'},
+  {id:'s15',fn:'Will',ln:'',tier:1,wage:16.6,email:'',phone:'',skills:['climb'],notes:'Climbing only'},
+  {id:'s16',fn:'Maiya',ln:'',tier:1,wage:17.6,email:'',phone:'',skills:['desk'],notes:'No coaching or floor'},
+];
+var PROGS=[
+  {name:'Summer Camp',tier:2,skills:['camp'],spw:5},
+  {name:'LON — Nemos',tier:3,skills:['ninja','climb'],spw:2},
+  {name:'LON 1.0',tier:3,skills:['ninja','climb'],spw:3},
+  {name:'LON 2.0',tier:3,skills:['ninja','climb'],spw:3},
+  {name:'LON 3.0',tier:3,skills:['ninja','climb'],spw:2},
+  {name:'Rattlesnakes',tier:3,skills:['climb'],spw:2},
+  {name:'Buffalos',tier:3,skills:['climb'],spw:2},
+  {name:'Birthday Parties',tier:2,skills:['party'],spw:4},
+  {name:'Front Desk',tier:1,skills:['desk'],spw:7},
+  {name:'Floor / Open Gym',tier:1,skills:[],spw:7},
+];
+var SHIFTS=[],TIMEOFF=[],AVAIL={};
+var WK=getMon(new Date());
+var DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+var PCLS={fl:'p-fl',dk:'p-dk',co:'p-co',pt:'p-pt',cm:'p-cm'};
+var PLBL={fl:'Floor',dk:'Desk',co:'Coach',pt:'Party',cm:'Camp'};
+
+function getMon(d){var day=d.getDay(),m=new Date(d);m.setDate(d.getDate()-day+(day===0?-6:1));m.setHours(0,0,0,0);return m;}
+function addD(d,n){var r=new Date(d);r.setDate(r.getDate()+n);return r;}
+function fmt(d){return d.toISOString().split('T')[0];}
+function fmtT(t){if(!t)return'';var p=t.split(':'),h=parseInt(p[0]),m=p[1];return(h>12?h-12:h===0?12:h)+':'+(m||'00')+(h>=12?'pm':'am');}
+function hrs(sh){if(!sh.s||!sh.e)return 0;var a=sh.s.split(':').map(Number),b=sh.e.split(':').map(Number);return((b[0]*60+b[1])-(a[0]*60+a[1]))/60;}
+function byId(id){return STAFF.find(function(s){return s.id===id;});}
+function uid(){return 'i'+Math.random().toString(36).slice(2,8);}
+function tc(t){return t===3?'#3d7eff':t===2?'#22c97a':'#f5a623';}
+function tbg(t){return t===3?'#1d4ed820':t===2?'#15803d20':'#78350f20';}
+
+function load(){try{var a=localStorage.getItem('asp_sh');if(a)SHIFTS=JSON.parse(a);}catch(e){}try{var b=localStorage.getItem('asp_to');if(b)TIMEOFF=JSON.parse(b);}catch(e){}try{var c=localStorage.getItem('asp_st');if(c)STAFF=JSON.parse(c);}catch(e){}try{var d=localStorage.getItem('asp_av');if(d)AVAIL=JSON.parse(d);}catch(e){}}
+function save(){try{localStorage.setItem('asp_sh',JSON.stringify(SHIFTS));localStorage.setItem('asp_to',JSON.stringify(TIMEOFF));localStorage.setItem('asp_st',JSON.stringify(STAFF));localStorage.setItem('asp_av',JSON.stringify(AVAIL));}catch(e){}}
+
+function showPage(name,el){
+  document.querySelectorAll('.page').forEach(function(p){p.classList.remove('on');});
+  document.querySelectorAll('.sb-item').forEach(function(s){s.classList.remove('on');});
+  var pg=document.getElementById('pg-'+name);if(pg)pg.classList.add('on');
+  var sb=document.getElementById('sb-'+name);if(sb)sb.classList.add('on');
+  if(el)el.classList.add('on');
+  if(name==='schedule')renderSched();
+  if(name==='roster')renderRoster();
+  if(name==='timeoff')renderTO();
+  if(name==='timesheet')renderTS();
+  if(name==='laborcost')renderLC();
+  if(name==='availability')renderAvPage();
+}
+
+function cW(d){WK=addD(WK,d*7);renderSched();}
+function goToday(){WK=getMon(new Date());renderSched();}
+
+function renderSched(){
+  var today=fmt(new Date());
+  var days=DAYS.map(function(d,i){return addD(WK,i);});
+  var end=addD(WK,6);
+  document.getElementById('wk-label').textContent=
+    days[0].toLocaleDateString('en-CA',{month:'short',day:'numeric'})+' – '+
+    end.toLocaleDateString('en-CA',{month:'short',day:'numeric',year:'numeric'});
+  var g=document.getElementById('sched-grid');
+  g.style.gridTemplateColumns='110px repeat(7,minmax(80px,1fr))';
+  var h='<div class="g-corner"></div>';
+  days.forEach(function(d,i){
+    var ds=fmt(d),it=ds===today;
+    h+='<div class="g-day'+(it?' today':'')+'"><div>'+(it?'<strong>'+DAYS[i]+'</strong>':DAYS[i])+'</div><div class="g-day-sub">'+d.toLocaleDateString('en-CA',{month:'short',day:'numeric'})+'</div></div>';
+  });
+  STAFF.forEach(function(st){
+    var onLeave=TIMEOFF.some(function(t){if(t.staffId!==st.id||t.status==='pending')return false;var ws=fmt(days[0]),we=fmt(days[6]);return t.from<=we&&t.to>=ws;});
+    h+='<div class="g-staff" onclick="openStaff(\''+st.id+'\')">'
+      +'<div class="g-av" style="background:'+tbg(st.tier)+';color:'+tc(st.tier)+'">'+st.fn[0]+'</div>'
+      +'<div><div style="font-size:11px;font-weight:700">'+st.fn+'</div><div style="font-size:10px;color:var(--muted)">T'+st.tier+' $'+st.wage+'</div></div>'
+      +(onLeave?'<span style="font-size:9px;color:var(--yel);margin-left:auto">Off</span>':'')
+      +'</div>';
+    days.forEach(function(d){
+      var ds=fmt(d);
+      var dsh=SHIFTS.filter(function(s){return s.staffId===st.id&&s.date===ds;});
+      var isOff=TIMEOFF.some(function(t){return t.staffId===st.id&&t.status==='approved'&&t.from<=ds&&t.to>=ds;});
+      h+='<div class="g-cell" onclick="openAddShift(\''+st.id+'\',\''+ds+'\')">';
+      if(isOff&&!dsh.length)h+='<div class="off-lbl">Off</div>';
+      dsh.forEach(function(sh){
+        var hh=hrs(sh);
+        h+='<div class="shift '+PCLS[sh.pos]+'" onclick="event.stopPropagation();editShift(\''+sh.id+'\')">'
+          +'<button class="shift-del" onclick="event.stopPropagation();qDel(\''+sh.id+'\')">x</button>'
+          +fmtT(sh.s)+'–'+fmtT(sh.e)
+          +'<span style="display:block;font-size:9px;opacity:.7">'+hh.toFixed(1)+'h'+(sh.n?' · '+sh.n.slice(0,14):'')+'</span>'
+          +'</div>';
+      });
+      if(!dsh.length&&!isOff)h+='<div class="plus">+</div>';
+      h+='</div>';
+    });
+  });
+  g.innerHTML=h;
+  renderLC();renderBadges();
+}
+
+function openAddShift(staffId,date){
+  document.getElementById('sp-t').textContent='Add shift';
+  document.getElementById('sh-del').style.display='none';
+  document.getElementById('sh-id').value='';
+  document.getElementById('sh-staff').value=staffId||'';
+  document.getElementById('sh-date').value=date||fmt(new Date());
+  document.getElementById('sh-s').value='09:00';
+  document.getElementById('sh-e').value='17:00';
+  document.getElementById('sh-pos').value='fl';
+  document.getElementById('sh-n').value='';
+  document.getElementById('sh-conflict').style.display='none';
+  openOv('ov-shift');chkConflict();
+}
+
+function editShift(id){
+  var sh=SHIFTS.find(function(s){return s.id===id;});if(!sh)return;
+  document.getElementById('sp-t').textContent='Edit shift';
+  document.getElementById('sh-del').style.display='inline-flex';
+  document.getElementById('sh-id').value=id;
+  document.getElementById('sh-staff').value=sh.staffId;
+  document.getElementById('sh-date').value=sh.date;
+  document.getElementById('sh-s').value=sh.s;
+  document.getElementById('sh-e').value=sh.e;
+  document.getElementById('sh-pos').value=sh.pos;
+  document.getElementById('sh-n').value=sh.n||'';
+  document.getElementById('sh-conflict').style.display='none';
+  openOv('ov-shift');
+}
+
+function chkConflict(){
+  var si=document.getElementById('sh-staff').value;
+  var dt=document.getElementById('sh-date').value;
+  var id=document.getElementById('sh-id').value;
+  var c=SHIFTS.some(function(s){return s.staffId===si&&s.date===dt&&s.id!==id;});
+  document.getElementById('sh-conflict').style.display=c?'block':'none';
+}
+
+function saveShift(){
+  var id=document.getElementById('sh-id').value||uid();
+  var staffId=document.getElementById('sh-staff').value;
+  var date=document.getElementById('sh-date').value;
+  var s=document.getElementById('sh-s').value;
+  var e=document.getElementById('sh-e').value;
+  var pos=document.getElementById('sh-pos').value;
+  var n=document.getElementById('sh-n').value.trim();
+  if(!staffId||!date||!s||!e){toast('Fill in all required fields','er');return;}
+  var idx=SHIFTS.findIndex(function(x){return x.id===id;});
+  var obj={id,staffId,date,s,e,pos,n};
+  if(idx>=0)SHIFTS[idx]=obj;else SHIFTS.push(obj);
+  save();closeOv('ov-shift');renderSched();toast('Shift saved','ok');
+}
+
+function delShift(){
+  var id=document.getElementById('sh-id').value;
+  SHIFTS=SHIFTS.filter(function(s){return s.id!==id;});
+  save();closeOv('ov-shift');renderSched();toast('Shift deleted','wa');
+}
+
+function qDel(id){
+  SHIFTS=SHIFTS.filter(function(s){return s.id!==id;});
+  save();renderSched();toast('Deleted','wa');
+}
+
+function copyPrev(){
+  var pw=addD(WK,-7);
+  var pd=DAYS.map(function(d,i){return fmt(addD(pw,i));});
+  var cd=DAYS.map(function(d,i){return fmt(addD(WK,i));});
+  var ps=SHIFTS.filter(function(s){return pd.indexOf(s.date)>=0;});
+  if(!ps.length){toast('No shifts last week to copy','wa');return;}
+  var added=0;
+  ps.forEach(function(sh){
+    var ni=pd.indexOf(sh.date),nd=cd[ni];
+    if(!SHIFTS.some(function(s){return s.staffId===sh.staffId&&s.date===nd;})){
+      SHIFTS.push({id:uid(),staffId:sh.staffId,date:nd,s:sh.s,e:sh.e,pos:sh.pos,n:sh.n});added++;
+    }
+  });
+  save();renderSched();toast('Copied '+added+' shifts','ok');
+}
+
+function openStaff(id){
+  var st=id?STAFF.find(function(s){return s.id===id;}):null;
+  document.getElementById('stp-t').textContent=st?'Edit staff':'Add staff';
+  document.getElementById('st-del').style.display=st?'inline-flex':'none';
+  document.getElementById('st-id').value=id||'';
+  document.getElementById('st-fn').value=st?st.fn:'';
+  document.getElementById('st-ln').value=st?st.ln:'';
+  document.getElementById('st-tier').value=st?st.tier:2;
+  document.getElementById('st-wage').value=st?st.wage:'';
+  document.getElementById('st-email').value=st?st.email:'';
+  document.getElementById('st-phone').value=st?st.phone:'';
+  document.getElementById('st-notes').value=st?st.notes:'';
+  ['ninja','climb','desk','party','camp'].forEach(function(k){document.getElementById('sk-'+k).checked=st?(st.skills||[]).indexOf(k)>=0:false;});
+  openOv('ov-staff');
+}
+
+function saveStaff(){
+  var id=document.getElementById('st-id').value||uid();
+  var fn=document.getElementById('st-fn').value.trim();
+  if(!fn){toast('Enter a name','er');return;}
+  var obj={id,fn,ln:document.getElementById('st-ln').value.trim(),
+    tier:parseInt(document.getElementById('st-tier').value),
+    wage:parseFloat(document.getElementById('st-wage').value)||0,
+    email:document.getElementById('st-email').value.trim(),
+    phone:document.getElementById('st-phone').value.trim(),
+    notes:document.getElementById('st-notes').value.trim(),
+    skills:['ninja','climb','desk','party','camp'].filter(function(k){return document.getElementById('sk-'+k).checked;})
+  };
+  var idx=STAFF.findIndex(function(s){return s.id===id;});
+  if(idx>=0)STAFF[idx]=obj;else STAFF.push(obj);
+  save();closeOv('ov-staff');renderSched();renderRoster();popSel();toast('Saved','ok');
+}
+
+function delStaff(){
+  var id=document.getElementById('st-id').value;
+  if(!confirm('Remove this staff member?'))return;
+  STAFF=STAFF.filter(function(s){return s.id!==id;});
+  SHIFTS=SHIFTS.filter(function(s){return s.staffId!==id;});
+  save();closeOv('ov-staff');renderSched();renderRoster();popSel();toast('Removed','wa');
+}
+
+function renderRoster(){
+  var days=DAYS.map(function(d,i){return fmt(addD(WK,i));});
+  document.getElementById('roster-body').innerHTML=STAFF.map(function(st){
+    var wh=SHIFTS.filter(function(s){return s.staffId===st.id&&days.indexOf(s.date)>=0;}).reduce(function(a,s){return a+hrs(s);},0);
+    var chips=(st.skills||[]).map(function(sk){return '<span style="background:#1e3a5f20;color:#3d7eff;padding:1px 6px;border-radius:3px;font-size:10px;margin-right:3px">'+sk+'</span>';}).join('');
+    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--bdr)">'
+      +'<div class="g-av" style="background:'+tbg(st.tier)+';color:'+tc(st.tier)+';flex-shrink:0">'+st.fn[0]+'</div>'
+      +'<div style="flex:1"><div style="font-size:13px;font-weight:700">'+st.fn+(st.ln?' '+st.ln:'')+'</div>'
+      +'<div style="font-size:11px;color:var(--muted)">T'+st.tier+' · $'+st.wage+'/hr'+(st.notes?' · '+st.notes:'')+'</div>'
+      +'<div style="margin-top:3px">'+chips+'</div></div>'
+      +'<div style="font-size:12px;color:var(--acc);font-weight:700;width:38px;text-align:right">'+wh.toFixed(1)+'h</div>'
+      +'<button class="btn btn-sm" onclick="openStaff(\''+st.id+'\')">Edit</button>'
+      +'</div>';
+  }).join('');
+}
+
+function openTO(){
+  document.getElementById('to-from').value=fmt(new Date());
+  document.getElementById('to-to').value=fmt(new Date());
+  document.getElementById('to-notes').value='';
+  openOv('ov-to');
+}
+
+function saveTO(status){
+  var staffId=document.getElementById('to-staff').value;
+  var from=document.getElementById('to-from').value;
+  var to=document.getElementById('to-to').value;
+  var type=document.getElementById('to-type').value;
+  var notes=document.getElementById('to-notes').value.trim();
+  if(!staffId||!from||!to){toast('Fill in all fields','er');return;}
+  TIMEOFF.push({id:uid(),staffId,from,to,type,status,notes});
+  save();closeOv('ov-to');renderTO();renderSched();renderBadges();
+  toast(status==='approved'?'Approved ✓':'Request saved','ok');
+}
+
+function renderTO(){
+  var today=fmt(new Date());
+  var p=TIMEOFF.filter(function(t){return t.status==='pending';});
+  var a=TIMEOFF.filter(function(t){return t.status==='approved';});
+  var u=a.filter(function(t){return t.to>=today;});
+  document.getElementById('to-pending').textContent=p.length;
+  document.getElementById('to-approved').textContent=a.length;
+  document.getElementById('to-upcoming').textContent=u.length;
+  if(!TIMEOFF.length){document.getElementById('to-list').innerHTML='<div class="sb2" style="color:var(--muted);text-align:center;padding:24px">No requests yet</div>';return;}
+  document.getElementById('to-list').innerHTML=TIMEOFF.slice().reverse().map(function(t){
+    var st=byId(t.staffId);if(!st)return'';
+    var sc=t.status==='approved'?'pill-g':t.status==='pending'?'pill-y':'pill-r';
+    return '<div class="to-row">'
+      +'<div class="g-av" style="background:'+tbg(st.tier)+';color:'+tc(st.tier)+';flex-shrink:0">'+st.fn[0]+'</div>'
+      +'<div style="flex:1"><div style="font-size:13px;font-weight:700">'+st.fn+'</div>'
+      +'<div style="font-size:11px;color:var(--muted)">'+t.from+' → '+t.to+' · '+t.type+(t.notes?' · '+t.notes:'')+'</div></div>'
+      +'<span class="pill '+sc+'">'+t.status+'</span>'
+      +(t.status==='pending'?'<button class="btn btn-grn btn-xs" onclick="appTO(\''+t.id+'\')">Approve</button>':'')
+      +'<button class="btn btn-xs" onclick="rmTO(\''+t.id+'\')">✕</button>'
+      +'</div>';
+  }).join('');
+}
+
+function appTO(id){var t=TIMEOFF.find(function(x){return x.id===id;});if(t){t.status='approved';save();renderTO();renderSched();toast('Approved','ok');}}
+function rmTO(id){TIMEOFF=TIMEOFF.filter(function(t){return t.id!==id;});save();renderTO();renderBadges();toast('Removed','wa');}
+
+function renderAvPage(){
+  var sel=document.getElementById('av-sel');
+  sel.innerHTML=STAFF.map(function(st){return'<option value="'+st.id+'">'+st.fn+'</option>';}).join('');
+  renderAv();
+}
+
+function renderAv(){
+  var staffId=document.getElementById('av-sel').value;
+  var av=AVAIL[staffId]||{};
+  var days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  document.getElementById('av-grid').innerHTML='<div style="display:grid;gap:10px">'+days.map(function(day){
+    var slots=av[day]||[];
+    return '<div style="display:flex;align-items:center;gap:12px">'
+      +'<div style="width:90px;font-size:13px;font-weight:700">'+day+'</div>'
+      +'<div style="flex:1">'+(slots.length?slots.map(function(s){return'<span style="background:#3d7eff20;color:var(--acc);padding:2px 8px;border-radius:4px;font-size:12px;margin-right:6px">'+s+'</span>';}).join(''):'<span style="color:var(--muted);font-size:12px">Not available</span>')+'</div>'
+      +'<button class="btn btn-xs" onclick="setAv(\''+staffId+'\',\''+day+'\')">Set</button>'
+      +'</div>';
+  }).join('')+'</div>';
+}
+
+function setAv(staffId,day){
+  var val=prompt('Availability for '+day+' (e.g. 09:00-17:00, or blank = unavailable):');
+  if(val===null)return;
+  if(!AVAIL[staffId])AVAIL[staffId]={};
+  AVAIL[staffId][day]=val?[val.trim()]:[];
+  save();renderAv();
+}
+
+function renderTS(){
+  var days=DAYS.map(function(d,i){return fmt(addD(WK,i));});
+  document.getElementById('ts-period').textContent=
+    new Date(days[0]).toLocaleDateString('en-CA',{month:'long',day:'numeric'})+' – '+
+    new Date(days[6]).toLocaleDateString('en-CA',{month:'long',day:'numeric',year:'numeric'});
+  var sd=STAFF.map(function(st){
+    var sh=SHIFTS.filter(function(s){return s.staffId===st.id&&days.indexOf(s.date)>=0;});
+    var h=sh.reduce(function(a,s){return a+hrs(s);},0);
+    return{st,h,cost:h*st.wage};
+  }).filter(function(d){return d.h>0;}).sort(function(a,b){return b.h-a.h;});
+  var tH=sd.reduce(function(a,d){return a+d.h;},0);
+  var tC=sd.reduce(function(a,d){return a+d.cost;},0);
+  document.getElementById('ts-hrs').textContent=tH.toFixed(1)+'h';
+  document.getElementById('ts-lab').textContent='$'+Math.round(tC);
+  document.getElementById('ts-sta').textContent=sd.length;
+  document.getElementById('ts-avg').textContent=sd.length?(tH/sd.length).toFixed(1)+'h':'—';
+  var mx=sd.length?Math.max.apply(null,sd.map(function(d){return d.h;})):1;
+  document.getElementById('ts-body').innerHTML=sd.map(function(d){
+    return '<div class="ts-row">'
+      +'<div class="g-av" style="background:'+tbg(d.st.tier)+';color:'+tc(d.st.tier)+';width:24px;height:24px;font-size:10px;flex-shrink:0">'+d.st.fn[0]+'</div>'
+      +'<div style="font-size:12px;font-weight:700;width:90px;flex-shrink:0">'+d.st.fn+'</div>'
+      +'<div class="bar-w"><div class="bar-f" style="width:'+Math.round(d.h/mx*100)+'%"></div></div>'
+      +'<div style="font-size:12px;font-weight:700;color:var(--acc);width:40px;text-align:right;flex-shrink:0">'+d.h.toFixed(1)+'h</div>'
+      +'<div style="font-size:12px;color:var(--muted);width:55px;text-align:right;flex-shrink:0">$'+Math.round(d.cost)+'</div>'
+      +'</div>';
+  }).join('');
+}
+
+function renderLC(){
+  var days=DAYS.map(function(d,i){return fmt(addD(WK,i));});
+  var ws=SHIFTS.filter(function(s){return days.indexOf(s.date)>=0;});
+  var tot=0,tH=0,byday={},bypos={};
+  ws.forEach(function(sh){
+    var st=byId(sh.staffId);if(!st)return;
+    var h=hrs(sh),c=h*st.wage;tot+=c;tH+=h;
+    byday[sh.date]=(byday[sh.date]||0)+c;
+    bypos[sh.pos]=(bypos[sh.pos]||0)+c;
+  });
+  var lc=document.getElementById('lc-tot');if(!lc)return;
+  lc.textContent='$'+Math.round(tot);
+  document.getElementById('lc-rate').textContent=tH>0?'$'+(tot/tH).toFixed(2):'-';
+  document.getElementById('lc-sh').textContent=ws.length;
+  var maxD=Math.max.apply(null,Object.values(byday).concat([1]));
+  document.getElementById('lc-pos').innerHTML=Object.keys(bypos).length?
+    Object.entries(bypos).sort(function(a,b){return b[1]-a[1];}).map(function(e){
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bdr)">'
+        +'<span class="shift '+PCLS[e[0]]+'" style="position:static;cursor:default;width:55px;font-size:11px">'+PLBL[e[0]]+'</span>'
+        +'<div class="bar-w"><div class="bar-f" style="width:'+Math.round(e[1]/tot*100)+'%"></div></div>'
+        +'<span style="font-size:12px;font-weight:700;color:var(--acc);width:50px;text-align:right">$'+Math.round(e[1])+'</span>'
+        +'</div>';
+    }).join(''):'<div style="color:var(--muted);text-align:center;padding:16px">No shifts this week</div>';
+  document.getElementById('lc-day').innerHTML=days.map(function(d){
+    var c=byday[d]||0;
+    var day=new Date(d).toLocaleDateString('en-CA',{weekday:'short',month:'short',day:'numeric'});
+    var col=c>400?'var(--red)':c>200?'var(--yel)':'var(--grn)';
+    return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bdr)">'
+      +'<div style="width:110px;font-size:11px;color:var(--muted)">'+day+'</div>'
+      +'<div class="bar-w"><div style="height:100%;border-radius:3px;background:'+col+';width:'+Math.round(c/maxD*100)+'%"></div></div>'
+      +'<span style="font-size:12px;font-weight:700;width:50px;text-align:right;color:'+col+'">$'+Math.round(c)+'</span>'
+      +'</div>';
+  }).join('');
+}
+
+function runAA(){
+  var days=DAYS.map(function(d,i){return addD(WK,i);});
+  var res=[],tf=0,tg=0,tc2=0;
+  PROGS.forEach(function(prog){
+    var asgn=[],gaps=0;
+    var elig=STAFF.filter(function(st){
+      if(st.tier<prog.tier)return false;
+      if(prog.skills.length&&!prog.skills.some(function(sk){return(st.skills||[]).indexOf(sk)>=0;}))return false;
+      return true;
+    }).sort(function(a,b){return(a.tier-prog.tier)-(b.tier-prog.tier)||a.wage-b.wage;});
+    for(var i=0;i<prog.spw;i++){
+      var d=days[i%5],ds=fmt(d);
+      var av=elig.filter(function(st){
+        return!SHIFTS.some(function(s){return s.staffId===st.id&&s.date===ds;})&&
+               !TIMEOFF.some(function(t){return t.staffId===st.id&&t.status==='approved'&&t.from<=ds&&t.to>=ds;});
+      });
+      if(av.length){var pk=av[0];asgn.push({st:pk,date:ds,day:DAYS[i%5]});tf++;tc2+=4*pk.wage;}
+      else{gaps++;tg++;}
+    }
+    res.push({prog,asgn,gaps});
+  });
+  document.getElementById('aa-p').textContent=PROGS.length;
+  document.getElementById('aa-f').textContent=tf;
+  document.getElementById('aa-g').textContent=tg;
+  document.getElementById('aa-c').textContent='$'+Math.round(tc2);
+  document.getElementById('sb-gaps-b').textContent=tg||'';
+  document.getElementById('sb-gaps-b').style.display=tg?'inline':'none';
+  document.getElementById('aa-results').innerHTML=res.map(function(r){
+    return '<div class="aa-prog"><div style="font-size:13px;font-weight:800;margin-bottom:2px">'+r.prog.name+'</div>'
+      +'<div style="font-size:11px;color:var(--muted);margin-bottom:8px">T'+r.prog.tier+'+ · '+r.prog.spw+' sessions/week</div>'
+      +r.asgn.map(function(a){
+        return '<div class="aa-row">'
+          +'<div class="g-av" style="background:'+tbg(a.st.tier)+';color:'+tc(a.st.tier)+';width:22px;height:22px;font-size:9px;flex-shrink:0">'+a.st.fn[0]+'</div>'
+          +'<div style="font-size:12px;font-weight:700;width:80px">'+a.st.fn+'</div>'
+          +'<div style="font-size:11px;color:var(--muted);flex:1">'+a.day+' · T'+a.st.tier+' · $'+a.st.wage+'/hr</div>'
+          +'<button class="btn btn-xs" style="background:#22c97a20;color:var(--grn);border-color:var(--grn)" onclick="addAssign(\''+a.st.id+'\',\''+a.date+'\',\'co\',\''+r.prog.name+'\')">+ Add shift</button>'
+          +'</div>';
+      }).join('')
+      +(r.gaps>0?'<div style="color:var(--red);font-size:11px;margin-top:6px">⚠ '+r.gaps+' session'+(r.gaps>1?'s':'')+' uncovered</div>':'')
+      +'</div>';
+  }).join('');
+  toast('Auto-assign done — '+tf+' assignments found','ok');
+}
+
+function addAssign(staffId,date,pos,n){
+  if(SHIFTS.some(function(s){return s.staffId===staffId&&s.date===date;})){toast('Already has a shift this day','wa');return;}
+  SHIFTS.push({id:uid(),staffId,date,s:'09:00',e:'13:00',pos,n});
+  save();toast('Shift added','ok');
+}
+
+function publishSchedule(){
+  var days=DAYS.map(function(d,i){return fmt(addD(WK,i));});
+  var sw=STAFF.filter(function(st){return SHIFTS.some(function(s){return s.staffId===st.id&&days.indexOf(s.date)>=0;});});
+  if(!sw.length){toast('No shifts scheduled this week','wa');return;}
+  document.getElementById('pub-preview').innerHTML=sw.map(function(st){
+    var my=SHIFTS.filter(function(s){return s.staffId===st.id&&days.indexOf(s.date)>=0;}).sort(function(a,b){return a.date.localeCompare(b.date);});
+    var h=my.reduce(function(a,s){return a+hrs(s);},0);
+    return '<div style="background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--r);padding:10px;margin-bottom:8px">'
+      +'<div style="font-size:13px;font-weight:700;margin-bottom:4px">'+st.fn+(st.ln?' '+st.ln:'')+'</div>'
+      +my.map(function(sh){return'<div style="font-size:12px;color:var(--muted)">'+new Date(sh.date).toLocaleDateString('en-CA',{weekday:'short',month:'short',day:'numeric'})+' — '+fmtT(sh.s)+' to '+fmtT(sh.e)+(sh.n?' ('+sh.n+')':'')+'</div>';}).join('')
+      +'<div style="font-size:11px;color:var(--acc);margin-top:4px">'+h.toFixed(1)+' hours</div>'
+      +(st.email?'<div style="font-size:10px;color:var(--grn)">✓ '+st.email+'</div>':'<div style="font-size:10px;color:var(--red)">✗ No email — add in Staff Roster</div>')
+      +'</div>';
+  }).join('');
+  openOv('ov-pub');
+}
+
+function sendSchedules(){
+  var days=DAYS.map(function(d,i){return fmt(addD(WK,i));});
+  var msg=document.getElementById('pub-msg').value;
+  var sw=STAFF.filter(function(st){return st.email&&SHIFTS.some(function(s){return s.staffId===st.id&&days.indexOf(s.date)>=0;});});
+  if(!sw.length){toast('No staff with emails — add in Staff Roster','wa');return;}
+  sw.forEach(function(st){
+    var my=SHIFTS.filter(function(s){return s.staffId===st.id&&days.indexOf(s.date)>=0;}).sort(function(a,b){return a.date.localeCompare(b.date);});
+    var body='Hi '+st.fn+',\n\nYour schedule this week:\n\n'
+      +my.map(function(sh){return'• '+new Date(sh.date).toLocaleDateString('en-CA',{weekday:'long',month:'short',day:'numeric'})+': '+fmtT(sh.s)+' – '+fmtT(sh.e)+(sh.n?' ('+sh.n+')':'');}).join('\n')
+      +'\n\n'+(msg?msg+'\n\n':'')+'— Aspire Climbing Management';
+    var a=document.createElement('a');
+    a.href='mailto:'+st.email+'?subject='+encodeURIComponent('Your schedule — week of '+new Date(days[0]).toLocaleDateString('en-CA',{month:'long',day:'numeric'}))+'&body='+encodeURIComponent(body);
+    a.click();
+  });
+  closeOv('ov-pub');toast('Email drafts opened for '+sw.length+' staff','ok');
+}
+
+function exportTS(){
+  var days=DAYS.map(function(d,i){return fmt(addD(WK,i));});
+  var rows=[['Name','Tier','Wage/hr','Date','Start','End','Hours','Position','Cost']];
+  STAFF.forEach(function(st){
+    SHIFTS.filter(function(s){return s.staffId===st.id&&days.indexOf(s.date)>=0;}).forEach(function(sh){
+      var h=hrs(sh);rows.push([st.fn+(st.ln?' '+st.ln:''),'T'+st.tier,'$'+st.wage,sh.date,sh.s,sh.e,h.toFixed(2),PLBL[sh.pos]||sh.pos,'$'+(h*st.wage).toFixed(2)]);
+    });
+  });
+  dlCSV('timesheet_'+fmt(days[0])+'.csv',rows);toast('Timesheet exported','ok');
+}
+
+function exportSched(){
+  var days=DAYS.map(function(d,i){return fmt(addD(WK,i));});
+  var rows=[['Date','Day','Staff','Position','Start','End','Hours','Notes']];
+  SHIFTS.filter(function(s){return days.indexOf(s.date)>=0;}).sort(function(a,b){return a.date.localeCompare(b.date);}).forEach(function(sh){
+    var st=byId(sh.staffId);if(!st)return;
+    rows.push([sh.date,new Date(sh.date).toLocaleDateString('en-CA',{weekday:'long'}),st.fn,PLBL[sh.pos]||sh.pos,sh.s,sh.e,hrs(sh).toFixed(2),sh.n||'']);
+  });
+  dlCSV('schedule_'+fmt(days[0])+'.csv',rows);toast('Schedule exported','ok');
+}
+
+function exportLC(){
+  var days=DAYS.map(function(d,i){return fmt(addD(WK,i));});
+  var rows=[['Date','Staff','Wage/hr','Hours','Cost','Position']];
+  SHIFTS.filter(function(s){return days.indexOf(s.date)>=0;}).forEach(function(sh){
+    var st=byId(sh.staffId);if(!st)return;
+    var h=hrs(sh);rows.push([sh.date,st.fn,'$'+st.wage,h.toFixed(2),'$'+(h*st.wage).toFixed(2),PLBL[sh.pos]||sh.pos]);
+  });
+  dlCSV('labor_'+fmt(days[0])+'.csv',rows);toast('Labor cost exported','ok');
+}
+
+function dlCSV(name,rows){
+  var csv=rows.map(function(r){return r.map(function(c){return'"'+String(c).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
+  var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download=name;a.click();
+}
+
+function openOv(id){document.getElementById(id).classList.add('on');}
+function closeOv(id){document.getElementById(id).classList.remove('on');}
+
+document.querySelectorAll('.overlay').forEach(function(el){
+  el.addEventListener('click',function(e){if(e.target===el)el.classList.remove('on');});
+});
+
+function popSel(){
+  var opts=STAFF.map(function(st){return'<option value="'+st.id+'">'+st.fn+(st.ln?' '+st.ln:'')+'</option>';}).join('');
+  ['sh-staff','to-staff'].forEach(function(id){var el=document.getElementById(id);if(el)el.innerHTML='<option value="">Select staff...</option>'+opts;});
+}
+
+function renderBadges(){
+  var p=TIMEOFF.filter(function(t){return t.status==='pending';}).length;
+  document.getElementById('sb-to-b').textContent=p||'';
+  document.getElementById('sb-to-b').style.display=p?'inline':'none';
+}
+
+function toast(msg,type){
+  var t=document.getElementById('toast');t.textContent=msg;
+  t.className='toast on'+(type?' '+type:'');
+  clearTimeout(t._x);t._x=setTimeout(function(){t.className='toast';},3500);
+}
+
+load();popSel();renderSched();renderBadges();
+</script>
+</body>
+</html>
