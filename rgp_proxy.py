@@ -110,6 +110,44 @@ class Handler(BaseHTTPRequestHandler):
             send_json(self, 200, {'status': 'ok', 'version': '3.1', 'service': 'OperatorOS RGP Proxy'})
             return
 
+        # WHEN I WORK — proxied to avoid browser CORS blocks
+        if path == '/wiw/shifts':
+            email    = (params.get('email') or [None])[0]
+            password = (params.get('password') or [None])[0]
+            days     = int((params.get('days') or ['21'])[0])
+            if not email or not password:
+                send_json(self, 401, {'error': 'Missing WIW email or password'})
+                return
+            try:
+                login_req = urllib.request.Request(
+                    'https://api.login.wheniwork.com/login',
+                    data=json.dumps({'email': email, 'password': password}).encode(),
+                    headers={'Content-Type': 'application/json', 'W-Key': 'knowledgebase'},
+                    method='POST'
+                )
+                ctx = ssl.create_default_context()
+                with urllib.request.urlopen(login_req, timeout=15, context=ctx) as resp:
+                    login_data = json.loads(resp.read().decode())
+                token = login_data.get('token') or (login_data.get('login') or {}).get('token')
+                if not token:
+                    send_json(self, 401, {'error': 'WIW login failed', 'detail': login_data})
+                    return
+
+                start = datetime.date.today().isoformat()
+                end   = (datetime.date.today() + datetime.timedelta(days=days)).isoformat()
+                shifts_req = urllib.request.Request(
+                    f'https://api.wheniwork.com/2/shifts?start={start}&end={end}',
+                    headers={'W-Token': token}
+                )
+                with urllib.request.urlopen(shifts_req, timeout=15, context=ctx) as resp2:
+                    shifts_data = json.loads(resp2.read().decode())
+                send_json(self, 200, {'shifts': shifts_data.get('shifts', []), 'total': len(shifts_data.get('shifts', []))})
+            except urllib.error.HTTPError as e:
+                send_json(self, e.code, {'error': 'WIW request failed', 'detail': e.read().decode()[:300]})
+            except Exception as e:
+                send_json(self, 500, {'error': 'WIW proxy error', 'detail': str(e)})
+            return
+
         u, k, fc = self.get_creds(params)
         if not u or not k:
             send_json(self, 401, {'error': 'No RGP credentials found. Check rgp_proxy_config.json'})
