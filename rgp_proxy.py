@@ -19,6 +19,9 @@ CORS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    # Chrome Private Network Access: a file:// or public page calling a private
+    # IP (127.0.0.1) is blocked unless the preflight opts in with this header.
+    'Access-Control-Allow-Private-Network': 'true',
 }
 
 def send_json(handler, code, body):
@@ -106,17 +109,26 @@ class Handler(BaseHTTPRequestHandler):
                 prompt = body.get('prompt', '')
                 model = body.get('model', 'claude-sonnet-4-6')
                 max_tokens = body.get('max_tokens', 1000)
-                if not api_key or not prompt:
-                    send_json(self, 400, {'error': 'Missing api_key or prompt'})
+                system = body.get('system', '')
+                messages = body.get('messages')
+                # Accept either a single prompt or a full messages array (for multi-turn chat)
+                if not messages:
+                    messages = [{'role': 'user', 'content': prompt}]
+                if not api_key or not messages:
+                    send_json(self, 400, {'error': 'Missing api_key or prompt/messages'})
                     return
+
+                payload = {
+                    'model': model,
+                    'max_tokens': max_tokens,
+                    'messages': messages,
+                }
+                if system:
+                    payload['system'] = system
 
                 ai_req = urllib.request.Request(
                     'https://api.anthropic.com/v1/messages',
-                    data=json.dumps({
-                        'model': model,
-                        'max_tokens': max_tokens,
-                        'messages': [{'role': 'user', 'content': prompt}]
-                    }).encode(),
+                    data=json.dumps(payload).encode(),
                     headers={
                         'Content-Type': 'application/json',
                         'x-api-key': api_key,
@@ -445,9 +457,8 @@ class Handler(BaseHTTPRequestHandler):
         # CHECKINS TODAY
         if path == '/checkins/today':
             today_str = datetime.date.today().isoformat()
-            start_ts = today_str + ' 00:00:00'
-            end_ts   = today_str + ' 23:59:59'
-            s, d = rgp_get(f'/v1/checkins/facility/{fc}', u, k, {'startDate': start_ts, 'endDate': end_ts})
+            # RGP expects date-only (YYYY-MM-DD); a " HH:MM:SS" suffix returns 400.
+            s, d = rgp_get(f'/v1/checkins/facility/{fc}', u, k, {'startDate': today_str, 'endDate': today_str})
             if s == 200:
                 raw = d.get('checkins', d.get('checkin', d.get('data', [])))
                 send_json(self, 200, {'count': len(raw), 'date': today, 'checkins': raw[:500], 'raw_keys': list(d.keys())})
@@ -460,9 +471,9 @@ class Handler(BaseHTTPRequestHandler):
             days  = int((params.get('days') or ['30'])[0])
             end   = datetime.date.today()
             start = end - datetime.timedelta(days=days)
-            start_ts = start.isoformat() + ' 00:00:00'
-            end_ts   = end.isoformat() + ' 23:59:59'
-            s, d  = rgp_get(f'/v1/checkins/facility/{fc}', u, k, {'startDate': start_ts, 'endDate': end_ts})
+            # RGP expects date-only (YYYY-MM-DD) for startDate/endDate — same as /invoices
+            # and /bookings. Appending a " 00:00:00" time component returns 400.
+            s, d  = rgp_get(f'/v1/checkins/facility/{fc}', u, k, {'startDate': start.isoformat(), 'endDate': end.isoformat()})
             if s == 200:
                 raw = d.get('checkins', d.get('checkin', d.get('data', [])))
                 daily = {}; hourly = {}; dow = {0:0,1:0,2:0,3:0,4:0,5:0,6:0}
@@ -495,13 +506,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/dashboard':
             today    = datetime.date.today().isoformat()
             start_30 = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
-            today_start_ts = today + ' 00:00:00'
-            today_end_ts   = today + ' 23:59:59'
             def safe(fn):
                 try:   return fn()
                 except: return (500, {})
             s1,d1 = safe(lambda: rgp_get(f'/v1/checkins/active/facility/{fc}', u, k))
-            s2,d2 = safe(lambda: rgp_get(f'/v1/checkins/facility/{fc}', u, k, {'startDate': today_start_ts, 'endDate': today_end_ts}))
+            # RGP expects date-only (YYYY-MM-DD); a " HH:MM:SS" suffix returns 400.
+            s2,d2 = safe(lambda: rgp_get(f'/v1/checkins/facility/{fc}', u, k, {'startDate': today, 'endDate': today}))
             s3,d3 = safe(lambda: rgp_get(f'/v1/customers/facility/{fc}', u, k, {'pageSize': 1}))
             s4,d4 = safe(lambda: rgp_get(f'/v1/invoices/facility/{fc}', u, k, {'startDate': start_30, 'endDate': today, 'pageSize': 1}))
             active_now   = d1.get('count', 0) if s1==200 else 0

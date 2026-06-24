@@ -1645,7 +1645,7 @@ function runIntel(){
       var ctx = buildAIContext(trend);
       return aiCall('You are a gym operations consultant. Respond ONLY with valid JSON, no markdown, no preamble, in exactly this shape:\n'
         +'{"opportunities":[{"title":"...","detail":"...","value":"$X"}],"risks":[{"title":"...","detail":"...","urgency":"high|medium|low"}],"dead_time":{"title":"...","detail":"...","fix":"..."},"retention":{"title":"...","detail":"...","at_risk_count":N}}\n'
-        +'Provide exactly 3 opportunities and 3 risks. Use the actual numbers from this data, especially the month-over-month change. Be specific and concise (1-2 sentences per detail).\n\nData:\n'+ctx);
+        +'Provide exactly 3 opportunities and 3 risks. Use the actual numbers from this data, especially the month-over-month change. Be specific and concise (1-2 sentences per detail).\n\nData:\n'+ctx, 4000);
     })
     .then(function(text){
       var parsed;
@@ -1658,7 +1658,10 @@ function runIntel(){
       }
       renderIntelCards(parsed);
     })
-    .catch(function(){ document.getElementById('intel-cards').innerHTML = '<div class="empty"><div class="empty-icon">📈</div>Analysis failed — check Claude API key and RGP connection in Settings</div>'; });
+    .catch(function(err){
+      var msg = (err && err.message) ? err.message : 'check Claude API key and RGP connection in Settings';
+      document.getElementById('intel-cards').innerHTML = '<div class="empty"><div class="empty-icon">📈</div>Analysis failed — '+msg+'</div>';
+    });
 }
 
 function renderIntelTrend(t){
@@ -1786,15 +1789,15 @@ function removePost(id){ SOCIAL_QUEUE=SOCIAL_QUEUE.filter(function(x){return x.i
 // ═══════════════════════════════════════════════════
 // AI HELPERS
 // ═══════════════════════════════════════════════════
-function aiCall(prompt){
+function aiCall(prompt, maxTokens){
   return fetch(proxyURL('/ai/call'),{
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({api_key:S.claude, prompt:prompt, model:'claude-sonnet-4-6', max_tokens:1000})
+    body:JSON.stringify({api_key:S.claude, prompt:prompt, model:'claude-sonnet-4-6', max_tokens:maxTokens||1000})
   })
   .then(function(r){return r.json();})
   .then(function(d){
-    if(d.error) throw new Error(d.error);
+    if(d.error) throw new Error(d.detail ? d.error+' — '+d.detail : d.error);
     if(!d.text) throw new Error('No response');
     return d.text;
   });
@@ -1820,18 +1823,19 @@ function sendChat(){
     +DATA.bookings.length+' programs, '+DATA.wiwShifts.length+' WIW shifts, '
     +'revenue 30d: $'+Math.round(DATA.dashboard.revenue_30d||0)+', checkins today: '+(DATA.dashboard.checkins_today||0)+'.'
     +' Be concise and actionable. Speak like a sharp ops consultant.';
-  fetch('https://api.anthropic.com/v1/messages',{
+  fetch(proxyURL('/ai/call'),{
     method:'POST',
-    headers:{'Content-Type':'application/json','x-api-key':S.claude,'anthropic-version':'2023-06-01'},
-    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:600,system:sys,messages:CHAT_HISTORY})
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({api_key:S.claude,model:'claude-sonnet-4-6',max_tokens:600,system:sys,messages:CHAT_HISTORY})
   })
   .then(function(r){return r.json();})
   .then(function(d){
-    var t = d.content&&d.content[0]&&d.content[0].text||'No response';
+    if(d.error) throw new Error(d.error);
+    var t = d.text||'No response';
     addMsg(t,'a');
     CHAT_HISTORY.push({role:'assistant',content:t});
   })
-  .catch(function(){ addMsg('Error — check API key in Settings.','a'); })
+  .catch(function(){ addMsg('Error — check API key in Settings and that the proxy is running.','a'); })
   .finally(function(){ document.getElementById('chat-send').disabled=false; });
 }
 
