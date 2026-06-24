@@ -286,6 +286,7 @@ tr:hover td{background:var(--surf2)}
       <div class="home-header">
         <div class="home-title" id="greeting">Good morning 👋</div>
         <div class="home-sub" id="home-date"></div>
+        <div class="home-sub" id="home-updated" style="font-size:11px;color:var(--muted);margin-top:2px"></div>
       </div>
       <div class="zones">
         <div class="zone red" onclick="nav('actions')">
@@ -1081,12 +1082,12 @@ function syncAll(){
       setDot('rgp','live','RGP ✓');
       document.getElementById('rgp-conn-txt').textContent = 'Proxy connected';
       document.getElementById('rgp-conn-dot').className = 'conn-dot grn';
+      startRealtime();   // begin live polling as soon as the proxy is reachable
       return loadDashboard();
     })
     .then(function(){
       return Promise.all([loadMembers(true), loadBookings(true), loadRevenue(true), loadCheckinHistory(), loadCheckins(true)]);
     })
-    .then(function(){ startRealtime(); })
     .catch(function(e){
       setDot('rgp','err','RGP ✗');
       document.getElementById('rgp-conn-txt').textContent = 'Proxy not reachable — check Settings';
@@ -1116,6 +1117,7 @@ function loadCheckins(silent){
     DATA.dashboard.checkins_today = cnt;
     var elNow   = document.getElementById('m-now');   if(elNow)   elNow.textContent   = now;
     var elToday = document.getElementById('m-today'); if(elToday) elToday.textContent = cnt;
+    markUpdated();
   }).catch(function(){ /* keep last known values on transient errors */ });
 }
 
@@ -1129,11 +1131,17 @@ function startRealtime(){
   REALTIME_STARTED = true;
   // Check-ins — live "On Floor Now" + "Check-ins Today" every 60 seconds.
   setInterval(function(){ if(S.rgpUser && S.rgpKey) loadCheckins(true); }, 60000);
-  // Revenue / invoices — refresh automatically every 5 minutes (also updates
-  // the home "Revenue 30d" KPI via loadRevenue).
-  setInterval(function(){ if(S.rgpUser && S.rgpKey) loadRevenue(true); }, 300000);
+  // Home dashboard (Active Members, At Risk, Revenue 30d) — refresh every 2
+  // minutes so the home numbers stay current without a manual sync.
+  setInterval(function(){ if(S.rgpUser && S.rgpKey){ loadDashboard(); loadRevenue(true); } }, 120000);
   // When I Work — keep the schedule in sync every 5 minutes.
   setInterval(function(){ if(S.wiwEmail && S.wiwPass) syncWIW(true); }, 300000);
+}
+
+// Stamp the home header so live refreshes are visible/verifiable.
+function markUpdated(){
+  var el = document.getElementById('home-updated');
+  if(el) el.textContent = '🟢 Live · updated ' + new Date().toLocaleTimeString('en-CA',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
 }
 
 function loadDashboard(){
@@ -1168,6 +1176,7 @@ function loadDashboard(){
       var rev = d.total_revenue || 0;
       document.getElementById('z-rev').textContent = rev > 0 ? '$'+Math.round(rev/1000)+'K' : '—';
       DATA.dashboard.revenue_30d = rev;
+      markUpdated();
     })
     .catch(function(e){ console.log('Dashboard load error:', e); });
 }
@@ -1426,7 +1435,9 @@ function syncWIW(silent){
   fetch(proxyURL('/wiw/shifts')+'?email='+encodeURIComponent(S.wiwEmail)+'&password='+encodeURIComponent(S.wiwPass)+'&days=28')
   .then(function(r){return r.json();})
   .then(function(d){
-    if(d.error) throw new Error(d.error);
+    // Surface the real WIW reason (e.g. "Incorrect username and/or password")
+    // instead of the generic error code, so a red dot is self-explanatory.
+    if(d.error) throw new Error(d.message || d.error);
     DATA.wiwShifts = d.shifts || [];
     DATA.wiwUsers  = d.users  || {};
     buildWiwIndex();
@@ -1437,9 +1448,11 @@ function syncWIW(silent){
     if(!silent) showToast('✓ Synced — '+DATA.wiwShifts.length+' WIW shifts','ok');
   })
   .catch(function(err){
+    var reason = err.message || 'check credentials';
     setDot('wiw','err','WIW ✗');
-    document.getElementById('wiw-conn-txt').textContent = 'Sync failed — '+(err.message||'check credentials');
+    document.getElementById('wiw-conn-txt').textContent = 'Sync failed — '+reason;
     document.getElementById('wiw-conn-dot').className = 'conn-dot red';
+    if(!silent) showToast('WIW sync failed — '+reason,'er');
   })
   .finally(function(){ setSyncState(false); });
 }
@@ -1515,10 +1528,10 @@ function testWIW(){
   fetch(proxyURL('/wiw/shifts')+'?email='+encodeURIComponent(S.wiwEmail)+'&password='+encodeURIComponent(S.wiwPass)+'&days=7')
     .then(function(r){return r.json();})
     .then(function(d){
-      if(d.error) { showToast('WIW failed — '+d.error,'er'); return; }
+      if(d.error) { showToast('WIW failed — '+(d.message || d.error),'er'); return; }
       showToast('✓ WIW connected — '+(d.total||0)+' shifts found','ok');
     })
-    .catch(function(){ showToast('WIW proxy error','er'); });
+    .catch(function(){ showToast('WIW proxy error — is the proxy running?','er'); });
 }
 
 function discoverRGP(){

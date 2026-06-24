@@ -15,6 +15,17 @@ def load_config():
     except:
         return {}
 
+def wiw_error_message(payload, fallback='WIW request failed'):
+    """Pull a human-readable reason out of a WIW error payload (dict or JSON string)."""
+    try:
+        d = payload if isinstance(payload, dict) else json.loads(payload)
+        errs = d.get('errors')
+        if isinstance(errs, list) and errs:
+            return errs[0].get('message') or errs[0].get('code') or fallback
+        return d.get('message') or d.get('error') or fallback
+    except Exception:
+        return fallback
+
 CORS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -324,7 +335,11 @@ class Handler(BaseHTTPRequestHandler):
                 token = login_data.get('token') or (login_data.get('login') or {}).get('token')
                 if not token:
                     print(f'  WIW ✗ no token in response: {login_data}')
-                    send_json(self, 401, {'error': 'WIW login failed', 'detail': login_data})
+                    send_json(self, 401, {
+                        'error': 'WIW login failed',
+                        'message': wiw_error_message(login_data, 'Incorrect WIW email or password'),
+                        'detail': login_data,
+                    })
                     return
                 print(f'  WIW ✓ got token, fetching users + shifts')
 
@@ -370,10 +385,18 @@ class Handler(BaseHTTPRequestHandler):
             except urllib.error.HTTPError as e:
                 detail = e.read().decode()[:300]
                 print(f'  WIW ✗ HTTPError {e.code}: {detail}')
-                send_json(self, e.code, {'error': 'WIW request failed', 'detail': detail})
+                send_json(self, e.code, {
+                    'error': 'WIW request failed',
+                    'message': wiw_error_message(detail, f'WIW API error (HTTP {e.code})'),
+                    'detail': detail,
+                })
             except Exception as e:
                 print(f'  WIW ✗ Exception: {type(e).__name__}: {str(e)}')
-                send_json(self, 500, {'error': 'WIW proxy error', 'detail': str(e)})
+                send_json(self, 500, {
+                    'error': 'WIW proxy error',
+                    'message': f'{type(e).__name__}: {e}',
+                    'detail': str(e),
+                })
             return
 
         u, k, fc = self.get_creds(params)

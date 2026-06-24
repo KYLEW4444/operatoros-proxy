@@ -2,7 +2,16 @@
 title OperatorOS Launcher
 cd /d "E:\IMPACT CLIMBING Dropbox\kyle Wilson\2.0\APP\ASPIRE OS new"
 
+echo Stopping any existing proxy so fresh code is loaded...
+REM Kill the proxy window we previously launched (matched by its title)...
+taskkill /F /FI "WINDOWTITLE eq OperatorOS Proxy" >nul 2>&1
+REM ...and anything still listening on port 5001 (covers manual / background starts).
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5001 " ^| findstr "LISTENING"') do taskkill /F /PID %%a >nul 2>&1
+
 echo Starting OperatorOS Proxy...
+REM PYTHONIOENCODING=utf-8 keeps the proxy's status logging (arrows/checkmarks)
+REM from crashing on Windows consoles that default to cp1252.
+set PYTHONIOENCODING=utf-8
 start "OperatorOS Proxy" /min python rgp_proxy.py
 
 timeout /t 3 /nobreak >nul
