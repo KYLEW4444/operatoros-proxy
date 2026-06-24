@@ -52,16 +52,35 @@ mirror step and any edits there would be lost. Edit in the repo, then copy.
 | File | Purpose |
 |------|---------|
 | `OperatorOS.html` | Single-page app (UI + all client JS). |
-| `rgp_proxy.py` | Local Python proxy bridging the browser to RockGymPro (RGP), When I Work (WIW), and the Claude API. Runs on `127.0.0.1:5001`. |
-| `rgp_proxy_config.json` | RGP credentials / facility code loaded by the proxy. |
+| `rgp_proxy.py` | Local Python proxy bridging the browser to RockGymPro (RGP), When I Work (WIW), and the Claude API. Binds `127.0.0.1:5001` only. Per-IP rate limited. |
+| `rgp_proxy_config.json` | **All credentials** (RGP, Claude, WIW) + facility code. **Gitignored** — never commit it. Copy `rgp_proxy_config.example.json` to create it. |
+| `watch_proxy.py` | Supervisor/file-watcher: runs the proxy and auto-restarts it when `rgp_proxy.py` / `OperatorOS.html` change (mirrors code repo→launcher; never the config). |
+| `WATCH_OperatorOS.bat` | Starts the watcher (dev: edit → auto-restart). |
+| `LAUNCH_OperatorOS.bat` | One-shot launcher: kills any old proxy (by cmdline + port, waits for the port to free), starts fresh, opens the app. |
 | `AspireSchedule.html` | Standalone schedule view. |
-| `LAUNCH_OperatorOS.bat` | Local launcher (starts the proxy + opens the app). |
+
+## Security model (important)
+- **Secrets never live in the browser.** RGP creds, the Claude API key, and WIW
+  creds are stored only in `rgp_proxy_config.json`. The frontend sends NO secrets
+  on API calls and persists NO secrets in localStorage. It only learns *whether*
+  creds are configured via `GET /config/status` (booleans).
+- The Settings "Save" button POSTs secrets once to `POST /config/set`
+  (localhost-only) which writes them to the config file. On first load after the
+  hardening, any legacy secrets still in localStorage are auto-migrated to the
+  config and stripped from the browser.
+- The proxy binds `127.0.0.1` only and rate-limits each IP
+  (`RATE_LIMIT_MAX`/`RATE_LIMIT_WINDOW`).
+- `rgp_proxy_config.json` is gitignored. NOTE: it was tracked previously, so the
+  old RGP key exists in git history — rotate that key if it was ever sensitive.
 
 ## Running locally
-Start the proxy, then open `OperatorOS.html` (or use `LAUNCH_OperatorOS.bat`):
+Two options:
+- **`LAUNCH_OperatorOS.bat`** — kills any old proxy and starts fresh, then opens the app. Use for normal day-to-day.
+- **`WATCH_OperatorOS.bat`** — runs the watcher so the proxy auto-restarts on every code change. Use while developing.
 
+Or manually:
 ```bash
-python rgp_proxy.py   # serves on http://127.0.0.1:5001
+python rgp_proxy.py   # serves on http://127.0.0.1:5001 (localhost only)
 ```
 
 ## Notes

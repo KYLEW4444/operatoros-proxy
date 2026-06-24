@@ -3,7 +3,7 @@ OperatorOS RGP Proxy v3.2 — WIW proxy added (cache-bust build)
 Credentials load from rgp_proxy_config.json automatically.
 Just run this file — no setup needed.
 """
-import json, urllib.request, urllib.parse, base64, os, datetime, ssl, re
+import json, urllib.request, urllib.parse, base64, os, datetime, ssl, re, time, threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rgp_proxy_config.json')
@@ -14,6 +14,34 @@ def load_config():
             return json.load(f)
     except:
         return {}
+
+def save_config(cfg):
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(cfg, f, indent=2)
+
+# ── Rate limiting ──────────────────────────────────────────────────────────
+# Simple in-memory sliding window per client IP so no single caller can hammer
+# the proxy. Generous enough for normal polling (a few requests/min) but blocks
+# runaway loops / abuse.
+RATE_LIMIT_MAX    = 240   # max requests ...
+RATE_LIMIT_WINDOW = 60    # ... per this many seconds, per IP
+_rate_lock = threading.Lock()
+_rate_hits = {}           # ip -> list[timestamps]
+
+def rate_limited(ip):
+    now = time.time()
+    with _rate_lock:
+        hits = [t for t in _rate_hits.get(ip, []) if now - t < RATE_LIMIT_WINDOW]
+        if len(hits) >= RATE_LIMIT_MAX:
+            _rate_hits[ip] = hits
+            return True
+        hits.append(now)
+        _rate_hits[ip] = hits
+        # Opportunistic cleanup so the dict can't grow unbounded.
+        if len(_rate_hits) > 256:
+            for k in [k for k, v in _rate_hits.items() if all(now - t >= RATE_LIMIT_WINDOW for t in v)]:
+                _rate_hits.pop(k, None)
+        return False
 
 def wiw_error_message(payload, fallback='WIW request failed'):
     """Pull a human-readable reason out of a WIW error payload (dict or JSON string)."""
@@ -35,12 +63,19 @@ CORS = {
     'Access-Control-Allow-Private-Network': 'true',
 }
 
-def send_json(handler, code, body):
+def send_json(handler, code, body, extra_headers=None):
     data = json.dumps(body, default=str).encode()
     handler.send_response(code)
     for k, v in CORS.items():
         handler.send_header(k, v)
     handler.send_header('Content-Type', 'application/json')
+    # Never let the browser cache API responses — this is why "Sync" could show
+    # stale numbers: a cached GET to /members or /invoices was reused.
+    handler.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+    handler.send_header('Pragma', 'no-cache')
+    handler.send_header('Expires', '0')
+    for k, v in (extra_headers or {}).items():
+        handler.send_header(k, v)
     handler.send_header('Content-Length', len(data))
     handler.end_headers()
     handler.wfile.write(data)
@@ -238,11 +273,44 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
+        if rate_limited(self.client_address[0]):
+            send_json(self, 429, {'error': 'Rate limit exceeded — slow down'},
+                      extra_headers={'Retry-After': str(RATE_LIMIT_WINDOW)})
+            return
+
+        # CONFIG SET — store credentials in the proxy config so they live on the
+        # machine, never in the browser. Localhost-only: never accept secret
+        # writes from the network.
+        if path == '/config/set':
+            if self.client_address[0] not in ('127.0.0.1', '::1', 'localhost'):
+                send_json(self, 403, {'error': 'Config can only be set from localhost'})
+                return
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+                body = json.loads(self.rfile.read(length).decode()) if length else {}
+                cfg = load_config()
+                allowed = ('rgp_user', 'rgp_key', 'facility_code', 'claude_key',
+                           'wiw_email', 'wiw_password', 'gym', 'location')
+                for key in allowed:
+                    if key in body and str(body[key]) != '':
+                        cfg[key] = body[key]
+                save_config(cfg)
+                send_json(self, 200, {'ok': True, 'status': {
+                    'rgp':    bool(cfg.get('rgp_user') and cfg.get('rgp_key')),
+                    'claude': bool(cfg.get('claude_key')),
+                    'wiw':    bool(cfg.get('wiw_email') and cfg.get('wiw_password')),
+                }})
+            except Exception as e:
+                send_json(self, 500, {'error': 'Could not save config', 'detail': str(e)})
+            return
+
         if path == '/ai/call':
             try:
                 length = int(self.headers.get('Content-Length', 0))
                 body = json.loads(self.rfile.read(length).decode())
-                api_key = body.get('api_key', '')
+                # SECURITY: prefer the Claude key from the proxy config; the
+                # browser no longer sends it. Body key kept as a fallback only.
+                api_key = load_config().get('claude_key', '') or body.get('api_key', '')
                 prompt = body.get('prompt', '')
                 model = body.get('model', 'claude-sonnet-4-6')
                 max_tokens = body.get('max_tokens', 1000)
@@ -251,8 +319,12 @@ class Handler(BaseHTTPRequestHandler):
                 # Accept either a single prompt or a full messages array (for multi-turn chat)
                 if not messages:
                     messages = [{'role': 'user', 'content': prompt}]
-                if not api_key or not messages:
-                    send_json(self, 400, {'error': 'Missing api_key or prompt/messages'})
+                if not api_key:
+                    send_json(self, 400, {'error': 'No Claude API key configured',
+                                          'detail': 'Add your Claude API key in Settings (stored in the proxy config).'})
+                    return
+                if not messages:
+                    send_json(self, 400, {'error': 'Missing prompt/messages'})
                     return
 
                 payload = {
@@ -292,9 +364,12 @@ class Handler(BaseHTTPRequestHandler):
         send_json(self, 404, {'error': f'Unknown POST path: {path}'})
 
     def get_creds(self, params):
+        # SECURITY: RGP credentials come ONLY from the proxy config, never from
+        # the browser/query string. facility_code is not secret, so it may be
+        # passed in the query to switch facilities.
         cfg = load_config()
-        u  = (params.get('api_user') or [None])[0] or cfg.get('rgp_user', '')
-        k  = (params.get('api_key')  or [None])[0] or cfg.get('rgp_key',  '')
+        u  = cfg.get('rgp_user', '')
+        k  = cfg.get('rgp_key',  '')
         fc = (params.get('facility_code') or [None])[0] or cfg.get('facility_code', 'ASP')
         return u.strip(), k.strip(), fc.strip()
 
@@ -303,17 +378,39 @@ class Handler(BaseHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         path   = parsed.path
 
-        if path == '/health':
-            send_json(self, 200, {'status': 'ok', 'version': '3.1', 'service': 'OperatorOS RGP Proxy'})
+        if rate_limited(self.client_address[0]):
+            send_json(self, 429, {'error': 'Rate limit exceeded — slow down'},
+                      extra_headers={'Retry-After': str(RATE_LIMIT_WINDOW)})
             return
 
-        # WHEN I WORK — proxied to avoid browser CORS blocks
+        if path == '/health':
+            send_json(self, 200, {'status': 'ok', 'version': '3.3', 'service': 'OperatorOS RGP Proxy'})
+            return
+
+        # CONFIG STATUS — booleans only, so the UI can tell whether credentials
+        # are configured without ever receiving the secrets themselves.
+        if path == '/config/status':
+            cfg = load_config()
+            send_json(self, 200, {
+                'rgp':    bool(cfg.get('rgp_user') and cfg.get('rgp_key')),
+                'claude': bool(cfg.get('claude_key')),
+                'wiw':    bool(cfg.get('wiw_email') and cfg.get('wiw_password')),
+                'facility_code': cfg.get('facility_code', 'ASP'),
+                'gym':    cfg.get('gym', ''),
+            })
+            return
+
+        # WHEN I WORK — proxied to avoid browser CORS blocks. Credentials come
+        # from the proxy config (kept out of the browser); query params remain
+        # accepted as a fallback for backwards compatibility.
         if path == '/wiw/shifts':
-            email    = (params.get('email') or [None])[0]
-            password = (params.get('password') or [None])[0]
+            _wcfg    = load_config()
+            email    = (params.get('email') or [None])[0] or _wcfg.get('wiw_email')
+            password = (params.get('password') or [None])[0] or _wcfg.get('wiw_password')
             days     = int((params.get('days') or ['21'])[0])
             if not email or not password:
-                send_json(self, 401, {'error': 'Missing WIW email or password'})
+                send_json(self, 401, {'error': 'WIW not configured',
+                                      'message': 'Add When I Work email/password in Settings'})
                 return
             try:
                 # Disable cert verification (matches rgp_get) — avoids flaky
@@ -829,10 +926,13 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
-    server = HTTPServer(('0.0.0.0', port), Handler)
-    print('OperatorOS RGP Proxy v3.1')
-    print(f'Running on port {port}')
-    print('Credentials loaded from rgp_proxy_config.json')
+    # SECURITY: bind to localhost only — the proxy must not be reachable from
+    # other machines on the network.
+    server = HTTPServer(('127.0.0.1', port), Handler)
+    print('OperatorOS RGP Proxy v3.3')
+    print(f'Running on http://127.0.0.1:{port} (localhost only)')
+    print('Credentials loaded from rgp_proxy_config.json (never stored in the browser)')
+    print(f'Rate limit: {RATE_LIMIT_MAX} requests / {RATE_LIMIT_WINDOW}s per IP')
     print('Keep this window open while using OperatorOS.')
     print('---')
     server.serve_forever()

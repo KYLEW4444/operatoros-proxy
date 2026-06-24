@@ -881,11 +881,17 @@ var DATA = {
 var SOCIAL_QUEUE = [];
 var CHAT_HISTORY = [];
 var CURRENT_USER = null;
+// Which credentials are configured server-side (the browser never holds the
+// real secrets). Populated from GET /config/status.
+var CONFIG_STATUS = {rgp:false, claude:false, wiw:false};
 
 function fc(){ return S['fc'+(S.fcActive||'1')] || S.fc1 || 'ASP'; }
 function proxyURL(path){ return S.proxy.replace(/\/$/,'') + path; }
 function rgpParams(extra){
-  var p = 'api_user='+encodeURIComponent(S.rgpUser)+'&api_key='+encodeURIComponent(S.rgpKey)+'&facility_code='+encodeURIComponent(fc());
+  // Secrets are NOT sent from the browser — the proxy reads RGP credentials from
+  // its own config. facility_code is not secret. '_' is a cache-buster so the
+  // browser never serves a stale GET (which caused "old numbers after sync").
+  var p = 'facility_code='+encodeURIComponent(fc())+'&_='+Date.now();
   if(extra) p += '&'+extra;
   return '?'+p;
 }
@@ -954,8 +960,59 @@ function initApp(){
   renderStaff('all');
   renderDeadOpps();
   document.getElementById('tb-gym').textContent = S.gym;
-  // Auto-sync if credentials exist
-  if(S.rgpUser && S.rgpKey) syncAll();
+  // Credentials now live in the proxy config. Migrate any legacy secrets out of
+  // localStorage, check what's configured, then auto-sync if RGP is set up.
+  maybeMigrateLegacy()
+    .then(loadConfigStatus)
+    .then(function(){ if(CONFIG_STATUS.rgp) syncAll(); });
+}
+
+// Fetch which credentials are configured (booleans only) and set non-secret
+// "configured" sentinels so the existing is-configured gates keep working
+// without the browser ever holding a real secret.
+function loadConfigStatus(){
+  return fetch(proxyURL('/config/status'),{cache:'no-store'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      CONFIG_STATUS = d || {rgp:false,claude:false,wiw:false};
+      if(CONFIG_STATUS.rgp){ S.rgpUser='✓'; S.rgpKey='✓'; } else { S.rgpUser=''; S.rgpKey=''; }
+      S.claude  = CONFIG_STATUS.claude ? '✓' : '';
+      if(CONFIG_STATUS.wiw){ S.wiwEmail='✓'; S.wiwPass='✓'; } else { S.wiwEmail=''; S.wiwPass=''; }
+      updateCredUI();
+    })
+    .catch(function(){ CONFIG_STATUS = {rgp:false,claude:false,wiw:false}; });
+}
+
+// Reflect configured-state in the Settings inputs (placeholder only — never the
+// real value).
+function updateCredUI(){
+  function mark(id, on){ var e=document.getElementById(id); if(e) e.placeholder = on ? '•••••••• saved (in proxy config)' : (e.getAttribute('data-ph')||''); }
+  mark('s-rgpuser', CONFIG_STATUS.rgp); mark('s-rgpkey', CONFIG_STATUS.rgp);
+  mark('s-claude',  CONFIG_STATUS.claude);
+  mark('s-wiwmail', CONFIG_STATUS.wiw); mark('s-wiwpass', CONFIG_STATUS.wiw);
+}
+
+// One-time migration: if old secrets are still in localStorage, push them into
+// the proxy config and strip them from the browser.
+function maybeMigrateLegacy(){
+  var raw = localStorage.getItem('ops_v3');
+  if(!raw) return Promise.resolve();
+  var s; try { s = JSON.parse(raw); } catch(e){ return Promise.resolve(); }
+  if(!(s.rgpKey || s.rgpUser || s.claude || s.wiwEmail || s.wiwPass)) return Promise.resolve();
+  var facility = s['fc'+(s.fcActive||'1')] || s.fc1 || 'ASP';
+  return fetch(proxyURL('/config/set'),{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      rgp_user:s.rgpUser||'', rgp_key:s.rgpKey||'', facility_code:facility,
+      claude_key:s.claude||'', wiw_email:s.wiwEmail||'', wiw_password:s.wiwPass||'',
+      gym:s.gym||'', location:s.location||''
+    })
+  }).then(function(){
+    // keep only non-secret preferences in localStorage
+    localStorage.setItem('ops_v3', JSON.stringify({
+      gym:s.gym, location:s.location, proxy:s.proxy, fc1:s.fc1, fc2:s.fc2, fcActive:s.fcActive
+    }));
+  }).catch(function(){ /* proxy not up yet; retried next load */ });
 }
 
 function setGreeting(){
@@ -973,25 +1030,35 @@ function saveSettings(){
   S.gym       = v('s-gym')    || S.gym;
   S.location  = v('s-loc')    || S.location;
   S.proxy     = v('s-proxy')  || S.proxy;
-  S.rgpUser   = v('s-rgpuser');
-  S.rgpKey    = v('s-rgpkey');
   S.fc1       = v('s-fc1')    || 'ASP';
   S.fc2       = v('s-fc2')    || 'ASPW';
   S.fcActive  = document.getElementById('s-fc-active').value;
-  S.wiwEmail  = v('s-wiwmail');
-  S.wiwPass   = v('s-wiwpass');
-  S.claude    = v('s-claude');
   S.pinOwner  = v('s-pin-owner') || S.pinOwner;
   S.pinMgr    = v('s-pin-mgr')   || S.pinMgr;
 
-  var save = {gym:S.gym,location:S.location,proxy:S.proxy,rgpUser:S.rgpUser,rgpKey:S.rgpKey,fc1:S.fc1,fc2:S.fc2,fcActive:S.fcActive,wiwEmail:S.wiwEmail,wiwPass:S.wiwPass,claude:S.claude};
+  // Only non-secret preferences are persisted in the browser.
+  var save = {gym:S.gym,location:S.location,proxy:S.proxy,fc1:S.fc1,fc2:S.fc2,fcActive:S.fcActive};
   localStorage.setItem('ops_v3', JSON.stringify(save));
-
   document.getElementById('tb-gym').textContent = S.gym;
+
+  // Secrets (RGP, Claude, WIW) are sent ONCE to the proxy to be stored in its
+  // config file — they are never kept in localStorage or sent on API calls.
+  var secrets = {facility_code:fc(), gym:S.gym, location:S.location};
+  var ru=v('s-rgpuser'), rk=v('s-rgpkey'), ck=v('s-claude'), wm=v('s-wiwmail'), wp=v('s-wiwpass');
+  if(ru) secrets.rgp_user=ru; if(rk) secrets.rgp_key=rk; if(ck) secrets.claude_key=ck;
+  if(wm) secrets.wiw_email=wm; if(wp) secrets.wiw_password=wp;
+
+  fetch(proxyURL('/config/set'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(secrets)})
+    .then(function(r){ return r.json(); })
+    .then(function(){
+      ['s-rgpuser','s-rgpkey','s-claude','s-wiwmail','s-wiwpass'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
+      return loadConfigStatus();
+    })
+    .then(function(){ showToast('Settings saved ✓ — credentials stored securely in proxy config','ok'); })
+    .catch(function(){ showToast('Saved prefs, but proxy unreachable — start it to store credentials','wa'); });
+
   var ok = document.getElementById('save-ok');
-  ok.style.display='inline';
-  setTimeout(function(){ok.style.display='none';},2500);
-  showToast('Settings saved ✓','ok');
+  if(ok){ ok.style.display='inline'; setTimeout(function(){ok.style.display='none';},2500); }
 }
 
 function loadSettings(){
@@ -999,11 +1066,12 @@ function loadSettings(){
   if(!raw) return;
   try {
     var saved = JSON.parse(raw);
-    Object.assign(S, saved);
+    // Load non-secret preferences only (secrets live in the proxy config).
+    S.gym=saved.gym||S.gym; S.location=saved.location||S.location; S.proxy=saved.proxy||S.proxy;
+    S.fc1=saved.fc1||S.fc1; S.fc2=saved.fc2||S.fc2; S.fcActive=saved.fcActive||S.fcActive;
     se('s-gym', S.gym); se('s-loc', S.location); se('s-proxy', S.proxy);
-    se('s-rgpuser', S.rgpUser); se('s-rgpkey', S.rgpKey); se('s-fc1', S.fc1); se('s-fc2', S.fc2);
-    se('s-wiwmail', S.wiwEmail); se('s-wiwpass', S.wiwPass); se('s-claude', S.claude);
-    document.getElementById('s-fc-active').value = S.fcActive || '1';
+    se('s-fc1', S.fc1); se('s-fc2', S.fc2);
+    var fa=document.getElementById('s-fc-active'); if(fa) fa.value = S.fcActive || '1';
     document.getElementById('tb-gym').textContent = S.gym;
   } catch(e){}
 }
@@ -1448,8 +1516,8 @@ function renderDeadOpps(){
 // WIW
 // ═══════════════════════════════════════════════════
 function syncWIW(silent){
-  if(!S.wiwEmail || !S.wiwPass){ setSyncState(false); return; }
-  fetch(proxyURL('/wiw/shifts')+'?email='+encodeURIComponent(S.wiwEmail)+'&password='+encodeURIComponent(S.wiwPass)+'&days=28')
+  if(!CONFIG_STATUS.wiw){ setSyncState(false); return; }
+  fetch(proxyURL('/wiw/shifts')+'?days=28&_='+Date.now(), {cache:'no-store'})
   .then(function(r){return r.json();})
   .then(function(d){
     // Surface the real WIW reason (e.g. "Incorrect username and/or password")
@@ -1541,8 +1609,8 @@ function testRGP(){
 }
 
 function testWIW(){
-  if(!S.wiwEmail){ showToast('Enter WIW credentials in Settings first','wa'); nav('settings'); return; }
-  fetch(proxyURL('/wiw/shifts')+'?email='+encodeURIComponent(S.wiwEmail)+'&password='+encodeURIComponent(S.wiwPass)+'&days=7')
+  if(!CONFIG_STATUS.wiw){ showToast('Add WIW credentials in Settings first','wa'); nav('settings'); return; }
+  fetch(proxyURL('/wiw/shifts')+'?days=7&_='+Date.now(), {cache:'no-store'})
     .then(function(r){return r.json();})
     .then(function(d){
       if(d.error) { showToast('WIW failed — '+(d.message || d.error),'er'); return; }
@@ -1940,7 +2008,7 @@ function aiCall(prompt, maxTokens){
   return fetch(proxyURL('/ai/call'),{
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({api_key:S.claude, prompt:prompt, model:'claude-sonnet-4-6', max_tokens:maxTokens||1000})
+    body:JSON.stringify({prompt:prompt, model:'claude-sonnet-4-6', max_tokens:maxTokens||1000})
   })
   .then(function(r){return r.json();})
   .then(function(d){
@@ -1973,7 +2041,7 @@ function sendChat(){
   fetch(proxyURL('/ai/call'),{
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({api_key:S.claude,model:'claude-sonnet-4-6',max_tokens:600,system:sys,messages:CHAT_HISTORY})
+    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:600,system:sys,messages:CHAT_HISTORY})
   })
   .then(function(r){return r.json();})
   .then(function(d){

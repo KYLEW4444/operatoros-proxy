@@ -1,2 +1,5 @@
 __pycache__/
 *.pyc
+
+# Credentials live only on the machine, never in git.
+rgp_proxy_config.json
