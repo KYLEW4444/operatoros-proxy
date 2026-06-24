@@ -70,7 +70,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 .home-header{margin-bottom:24px}
 .home-title{font-size:22px;font-weight:800;margin-bottom:3px}
 .home-sub{color:var(--muted);font-size:13px}
-.zones{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:28px}
+.zones{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:28px}
 .zone{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r2);padding:14px 16px;cursor:pointer;transition:all .15s;position:relative;overflow:hidden}
 .zone::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
 .zone.red::before{background:var(--red)}.zone.yel::before{background:var(--yel)}
@@ -312,6 +312,12 @@ tr:hover td{background:var(--surf2)}
           <div class="zone-label">Revenue 30d</div>
           <div class="zone-val blu" id="z-rev">—</div>
           <div class="zone-sub">from RGP live</div>
+        </div>
+        <div class="zone blu" onclick="nav('revenue')">
+          <div class="zone-icon">🧾</div>
+          <div class="zone-label">Invoices Today</div>
+          <div class="zone-val blu" id="z-today">—</div>
+          <div class="zone-sub" id="z-today-sub">today's sales</div>
         </div>
         <div class="zone pur" onclick="nav('social')">
           <div class="zone-icon">📣</div>
@@ -1144,6 +1150,15 @@ function markUpdated(){
   if(el) el.textContent = '🟢 Live · updated ' + new Date().toLocaleTimeString('en-CA',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
 }
 
+// Update the home "Invoices Today" zone from an /invoices response.
+function setTodayInvoices(d){
+  var zt  = document.getElementById('z-today');
+  var zts = document.getElementById('z-today-sub');
+  if(zt)  zt.textContent  = (d && d.today_count != null) ? d.today_count : '—';
+  if(zts) zts.textContent = (d && d.today_revenue) ? '$'+Math.round(d.today_revenue).toLocaleString()+' today' : "today's sales";
+  if(d && d.today_count != null) DATA.dashboard.invoices_today = d.today_count;
+}
+
 function loadDashboard(){
   // Load members count directly from /members endpoint
   return fetch(proxyURL('/members') + rgpParams())
@@ -1175,6 +1190,7 @@ function loadDashboard(){
     .then(function(d){
       var rev = d.total_revenue || 0;
       document.getElementById('z-rev').textContent = rev > 0 ? '$'+Math.round(rev/1000)+'K' : '—';
+      setTodayInvoices(d);
       DATA.dashboard.revenue_30d = rev;
       markUpdated();
     })
@@ -1349,6 +1365,7 @@ function loadRevenue(silent){
       var total = d.total_revenue || 0;
       DATA.dashboard.revenue_30d = total;
       var zr = document.getElementById('z-rev'); if(zr) zr.textContent = total > 0 ? '$'+Math.round(total/1000)+'K' : '—';
+      setTodayInvoices(d);
       document.getElementById('rev-kpis').innerHTML = [
         {l:'Total Revenue',v:'$'+Math.round(total).toLocaleString(),c:'b'},
         {l:'Invoices',v:d.total||0,c:'g'},

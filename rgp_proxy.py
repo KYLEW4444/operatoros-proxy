@@ -518,42 +518,43 @@ class Handler(BaseHTTPRequestHandler):
                 send_json(self, s, d)
             return
 
-        # INVOICES — Nicole confirmed: /v1/invoices/facility/{facilityCode}
+        # INVOICES — /v1/invoices/facility/{fc}. RGP filters by startDateTime/
+        # endDateTime ('YYYY-MM-DD HH:MM:SS'); the old startDate/endDate params
+        # were silently ignored, so the endpoint returned the OLDEST invoices
+        # (2016) instead of the last 30 days. fetch_all uses the correct params.
         if path == '/invoices':
-            today    = datetime.date.today().isoformat()
-            start_30 = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
-            s, d = rgp_get(f'/v1/invoices/facility/{fc}', u, k, {
-                'startDate': start_30,
-                'endDate':   today,
-                'orderBy':   'invoicePostDate',
-                'orderDir':  'desc',
-                'pageSize':  500,
+            today     = datetime.date.today()
+            today_str = today.isoformat()
+            start_30  = (today - datetime.timedelta(days=30)).isoformat()
+            raw = fetch_all(f'/v1/invoices/facility/{fc}', u, k,
+                            f'{start_30} 00:00:00', f'{today_str} 23:59:59', 'invoices')
+            # Filter out voided invoices for accurate revenue.
+            valid = [i for i in raw if not i.get('voidedInvoice', 0)]
+            total_rev = sum(float(i.get('amount', 0) or 0) for i in valid)
+            today_count = sum(1 for i in valid
+                              if str(i.get('invoicePostDate', ''))[:10] == today_str)
+            today_rev = round(sum(float(i.get('amount', 0) or 0) for i in valid
+                                  if str(i.get('invoicePostDate', ''))[:10] == today_str), 2)
+            invoices = [{
+                'date':    i.get('invoicePostDate', ''),
+                'type':    i.get('invtype', ''),
+                'amount':  float(i.get('amount', 0) or 0),
+                'tax':     float(i.get('salesTax', 0) or 0),
+                'source':  (i.get('payment') or {}).get('source', ''),
+                'voided':  bool(i.get('voidedInvoice', 0)),
+                'memo':    i.get('memo', ''),
+            } for i in raw]
+            invoices.sort(key=lambda x: x['date'], reverse=True)  # newest first
+            send_json(self, 200, {
+                'invoices': invoices,
+                'total': len(invoices),
+                'valid_count': len(valid),
+                'total_revenue': round(total_rev, 2),
+                'today_count': today_count,
+                'today_revenue': today_rev,
+                'date_start': start_30,
+                'date_end': today_str,
             })
-            if s == 200:
-                raw = d.get('invoices', d.get('invoice', d.get('data', [])))
-                # Filter out voided invoices for accurate revenue
-                valid = [i for i in raw if not i.get('voidedInvoice', 0)]
-                total_rev = sum(float(i.get('amount', 0) or 0) for i in valid)
-                # Normalize to clean schema using confirmed field names
-                invoices = [{
-                    'date':    i.get('invoicePostDate', ''),
-                    'type':    i.get('invtype', ''),
-                    'amount':  float(i.get('amount', 0) or 0),
-                    'tax':     float(i.get('salesTax', 0) or 0),
-                    'source':  (i.get('payment') or {}).get('source', ''),
-                    'voided':  bool(i.get('voidedInvoice', 0)),
-                    'memo':    i.get('memo', ''),
-                    'items':   i.get('items', []),
-                } for i in raw]
-                send_json(self, 200, {
-                    'invoices': invoices,
-                    'total': len(invoices),
-                    'valid_count': len(valid),
-                    'total_revenue': round(total_rev, 2),
-                    'raw_keys': list(d.keys()),
-                })
-            else:
-                send_json(self, s, {'error': d, 'path_tried': f'/v1/invoices/facility/{fc}'})
             return
 
         # INTELLIGENCE — this month vs last month, for trend comparison
