@@ -3,7 +3,7 @@ OperatorOS RGP Proxy v3.2 — WIW proxy added (cache-bust build)
 Credentials load from rgp_proxy_config.json automatically.
 Just run this file — no setup needed.
 """
-import json, urllib.request, urllib.parse, base64, os, datetime, ssl
+import json, urllib.request, urllib.parse, base64, os, datetime, ssl, re
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rgp_proxy_config.json')
@@ -85,6 +85,104 @@ def rgp_get(path, user, key, params=None):
     except Exception as ex:
         print(f'  RGP ← ERROR: {ex}')
         return 500, {'error': str(ex)}
+
+def rgp_request(path, user, key, params=None, verbose=True):
+    """
+    Single RGP GET with NO auto-injected params (page/pageSize) and detailed
+    logging of the exact URL, status and raw body. Used by the checkins
+    endpoints, whose RGP contract differs from the other resources:
+      • date filters are startDateTime/endDateTime in 'YYYY-MM-DD HH:MM:SS'
+        format (a SPACE separator — must be %20-encoded; '+' returns 400)
+      • pagination uses 'limit' (10-200) + 'page', NOT 'pageSize'
+    Returns (status, parsed_dict, raw_text).
+    """
+    creds = base64.b64encode(f'{user}:{key}'.encode()).decode()
+    headers = {
+        'Authorization': f'Basic {creds}',
+        'User-Agent': 'OperatorOS/3.2',
+        'Accept': 'application/json',
+    }
+    # quote (NOT quote_plus) so a space becomes %20 — RGP rejects '+' with 400.
+    qs = ('?' + urllib.parse.urlencode(params, quote_via=urllib.parse.quote)) if params else ''
+    url = f'https://api.rockgympro.com{path}{qs}'
+    if verbose: print(f'  RGP → {url}')
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=25, context=ctx) as r:
+            raw = r.read().decode('utf-8', 'ignore')
+            if verbose: print(f'  RGP ← {r.status} ({len(raw)} bytes): {raw[:600]}')
+            try:    return r.status, json.loads(raw), raw
+            except: return r.status, {'error': 'non-json response', 'raw': raw[:600]}, raw
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode('utf-8', 'ignore')
+        if verbose: print(f'  RGP ← HTTP {e.code}: {raw[:600]}')
+        try:    return e.code, json.loads(raw), raw
+        except: return e.code, {'error': raw[:600], 'http_status': e.code}, raw
+    except Exception as ex:
+        if verbose: print(f'  RGP ← ERROR: {type(ex).__name__}: {ex}')
+        return 500, {'error': str(ex)}, ''
+
+# Matches 'YYYY-MM-DD HH:MM' inside any checkin field so we can aggregate
+# regardless of the exact field name RGP uses for the timestamp.
+CHECKIN_DT_RE = re.compile(r'(\d{4}-\d{2}-\d{2})[ T](\d{2}):\d{2}')
+
+def checkin_datetime(rec):
+    """Return (date_str, hour_int) for a checkin record, or (None, None)."""
+    if not isinstance(rec, dict):
+        return None, None
+    preferred = ('checkinDateTime', 'checkin_datetime', 'checkInDateTime',
+                 'checkinDate', 'checkin_date', 'dateTime', 'datetime',
+                 'date', 'time', 'createdDate', 'timestamp')
+    for key in preferred:
+        v = rec.get(key)
+        if v:
+            m = CHECKIN_DT_RE.search(str(v))
+            if m:
+                return m.group(1), int(m.group(2))
+    for v in rec.values():
+        if isinstance(v, str):
+            m = CHECKIN_DT_RE.search(v)
+            if m:
+                return m.group(1), int(m.group(2))
+    return None, None
+
+CHECKINS_HINT = (
+    "RGP returned an error for the check-ins endpoint. The request matches the RGP "
+    "OpenAPI spec (startDateTime/endDateTime as 'YYYY-MM-DD HH:MM:SS', limit<=200), so this "
+    "usually means check-in/check-out tracking is not enabled for this facility, or the API key "
+    "was generated without the 'Check-ins' scope. Verify in RGP: Manage -> Settings -> Integration "
+    "(API key permissions) and that Check-In/Out is enabled for the facility."
+)
+
+def fetch_checkins(fc, user, key, start_date, end_date, max_pages=60):
+    """
+    Fetch all checkins between two date strings (YYYY-MM-DD), paginating with
+    limit=200 + page until a short page is returned.
+    Returns (status, last_response_dict, all_records).
+    """
+    all_records = []
+    last = {}
+    status = 200
+    for page in range(1, max_pages + 1):
+        s, d, _raw = rgp_request(f'/v1/checkins/facility/{fc}', user, key, {
+            'startDateTime': f'{start_date} 00:00:00',
+            'endDateTime':   f'{end_date} 23:59:59',
+            'limit': 200,
+            'page': page,
+        })
+        status, last = s, d
+        if s != 200:
+            return s, d, all_records
+        recs = d.get('checkins', d.get('checkin', d.get('data', [])))
+        if isinstance(recs, dict): recs = list(recs.values())
+        if not isinstance(recs, list): recs = []
+        all_records.extend(recs)
+        if len(recs) < 200:
+            break
+    return status, last, all_records
 
 class Handler(BaseHTTPRequestHandler):
 
@@ -477,63 +575,78 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
-        # CHECKINS ACTIVE — Nicole confirmed: /v1/checkins/active/facility/{facilityCode}
+        # CHECKINS ACTIVE — /v1/checkins/active/facility/{fc} (takes NO query params)
         if path == '/checkins/active':
-            s, d = rgp_get(f'/v1/checkins/active/facility/{fc}', u, k)
+            s, d, _raw = rgp_request(f'/v1/checkins/active/facility/{fc}', u, k, None)
             if s == 200:
-                checkins = d.get('checkins', d.get('data', []))
-                count = d.get('count', d.get('activeCount', len(checkins) if isinstance(checkins, list) else 0))
-                send_json(self, 200, {'active_now': count})
+                # RGP returns the active count; tolerate several response shapes.
+                cnt = d.get('count', d.get('activeCount', d.get('active', d.get('data'))))
+                if isinstance(cnt, list): cnt = len(cnt)
+                if not isinstance(cnt, int):
+                    try:    cnt = int(cnt)
+                    except: cnt = 0
+                send_json(self, 200, {'active_now': cnt, 'rgp_raw': d})
             else:
-                send_json(self, s, d)
+                send_json(self, s, {
+                    'active_now': 0, 'rgp_status': s,
+                    'rgp_message': d.get('message') if isinstance(d, dict) else None,
+                    'error': d, 'path_tried': f'/v1/checkins/active/facility/{fc}',
+                    'hint': CHECKINS_HINT,
+                })
             return
 
-        # CHECKINS TODAY
+        # CHECKINS TODAY — /v1/checkins/facility/{fc} for the current day
         if path == '/checkins/today':
             today_str = datetime.date.today().isoformat()
-            # RGP expects date-only (YYYY-MM-DD); a " HH:MM:SS" suffix returns 400.
-            s, d = rgp_get(f'/v1/checkins/facility/{fc}', u, k, {'startDate': today_str, 'endDate': today_str})
+            s, d, recs = fetch_checkins(fc, u, k, today_str, today_str)
             if s == 200:
-                raw = d.get('checkins', d.get('checkin', d.get('data', [])))
-                send_json(self, 200, {'count': len(raw), 'date': today, 'checkins': raw[:500], 'raw_keys': list(d.keys())})
+                send_json(self, 200, {
+                    'count': len(recs), 'date': today_str,
+                    'checkins': recs[:500],
+                    'sample_record': recs[0] if recs else None,
+                })
             else:
-                send_json(self, s, d)
+                send_json(self, s, {
+                    'count': 0, 'rgp_status': s,
+                    'rgp_message': d.get('message') if isinstance(d, dict) else None,
+                    'error': d, 'path_tried': f'/v1/checkins/facility/{fc}',
+                    'hint': CHECKINS_HINT,
+                })
             return
 
-        # CHECKINS HISTORY — Nicole confirmed: /v1/checkins/facility/{facilityCode} with date range
+        # CHECKINS HISTORY — /v1/checkins/facility/{fc} over a date range
         if path == '/checkins/history':
             days  = int((params.get('days') or ['30'])[0])
             end   = datetime.date.today()
             start = end - datetime.timedelta(days=days)
-            # RGP expects date-only (YYYY-MM-DD) for startDate/endDate — same as /invoices
-            # and /bookings. Appending a " 00:00:00" time component returns 400.
-            s, d  = rgp_get(f'/v1/checkins/facility/{fc}', u, k, {'startDate': start.isoformat(), 'endDate': end.isoformat()})
+            s, d, recs = fetch_checkins(fc, u, k, start.isoformat(), end.isoformat())
             if s == 200:
-                raw = d.get('checkins', d.get('checkin', d.get('data', [])))
                 daily = {}; hourly = {}; dow = {0:0,1:0,2:0,3:0,4:0,5:0,6:0}
-                for c in raw:
-                    ds = str(c.get('checkinDate', c.get('checkin_date', c.get('date', c.get('visitDate', '')))))[:10]
-                    if ds and len(ds) == 10:
+                for c in recs:
+                    ds, h = checkin_datetime(c)
+                    if ds:
                         daily[ds] = daily.get(ds, 0) + 1
                         try:
                             dt = datetime.date.fromisoformat(ds)
                             dow[dt.weekday()] = dow.get(dt.weekday(), 0) + 1
                         except: pass
-                    ts = str(c.get('checkinTime', c.get('checkin_time', c.get('time', ''))))
-                    if ts and len(ts) >= 2:
-                        try:
-                            h = int(ts[:2])
-                            if 0 <= h <= 23: hourly[h] = hourly.get(h, 0) + 1
-                        except: pass
+                    if h is not None and 0 <= h <= 23:
+                        hourly[h] = hourly.get(h, 0) + 1
                 send_json(self, 200, {
-                    'total': len(raw), 'days': days,
+                    'total': len(recs), 'days': days,
                     'daily_counts': daily, 'hourly_distribution': hourly,
                     'day_of_week_counts': dow,
-                    'avg_per_day': round(len(raw)/days, 1) if days else 0,
-                    'raw_keys': list(d.keys()),
+                    'avg_per_day': round(len(recs)/days, 1) if days else 0,
+                    'sample_record': recs[0] if recs else None,
                 })
             else:
-                send_json(self, s, {'error': d, 'path_tried': f'/v1/checkins/facility/{fc}'})
+                send_json(self, s, {
+                    'error': d, 'rgp_status': s,
+                    'rgp_message': d.get('message') if isinstance(d, dict) else None,
+                    'total': 0, 'hourly_distribution': {}, 'day_of_week_counts': {},
+                    'path_tried': f'/v1/checkins/facility/{fc}',
+                    'hint': CHECKINS_HINT,
+                })
             return
 
         # DASHBOARD — single call for home screen numbers
@@ -543,13 +656,18 @@ class Handler(BaseHTTPRequestHandler):
             def safe(fn):
                 try:   return fn()
                 except: return (500, {})
-            s1,d1 = safe(lambda: rgp_get(f'/v1/checkins/active/facility/{fc}', u, k))
-            # RGP expects date-only (YYYY-MM-DD); a " HH:MM:SS" suffix returns 400.
-            s2,d2 = safe(lambda: rgp_get(f'/v1/checkins/facility/{fc}', u, k, {'startDate': today, 'endDate': today}))
+            # Checkins use the dedicated request path (startDateTime/endDateTime, limit).
+            try:    s1, d1, _r1 = rgp_request(f'/v1/checkins/active/facility/{fc}', u, k, None)
+            except: s1, d1 = 500, {}
+            try:    s2, d2, today_recs = fetch_checkins(fc, u, k, today, today)
+            except: s2, today_recs = 500, []
             s3,d3 = safe(lambda: rgp_get(f'/v1/customers/facility/{fc}', u, k, {'pageSize': 1}))
             s4,d4 = safe(lambda: rgp_get(f'/v1/invoices/facility/{fc}', u, k, {'startDate': start_30, 'endDate': today, 'pageSize': 1}))
-            active_now   = d1.get('count', 0) if s1==200 else 0
-            today_list   = d2.get('checkins', d2.get('data', [])) if s2==200 else []
+            active_now   = (d1.get('count', d1.get('activeCount', d1.get('data', 0))) if s1==200 else 0)
+            if not isinstance(active_now, int):
+                try: active_now = int(active_now)
+                except: active_now = 0
+            today_list   = today_recs if s2==200 else []
             members_total= int(d3.get('total', d3.get('totalCount', d3.get('count', 0))) or 0) if s3==200 else 0
             rev_total    = float(d4.get('total_revenue', 0) or 0) if s4==200 else 0
             send_json(self, 200, {
@@ -570,12 +688,16 @@ class Handler(BaseHTTPRequestHandler):
                 ('bookings',        f'/v1/bookings/facility/{fc}',       {'pageSize':1}),
                 ('invoices',        f'/v1/invoices/facility/{fc}',       {'pageSize':1}),
                 ('sales',           f'/v1/sales/facility/{fc}',          {'pageSize':1, 'startDate': (datetime.date.today()-datetime.timedelta(days=7)).isoformat(), 'endDate': datetime.date.today().isoformat()}),
-                ('checkins',        f'/v1/checkins/facility/{fc}',       {'pageSize':1, 'startDate': (datetime.date.today()-datetime.timedelta(days=7)).isoformat(), 'endDate': datetime.date.today().isoformat()}),
-                ('checkins_active', f'/v1/checkins/active/facility/{fc}',{'startDate': datetime.date.today().isoformat(), 'endDate': datetime.date.today().isoformat()}),
+                # Checkins use startDateTime/endDateTime ('YYYY-MM-DD HH:MM:SS') + limit, via rgp_request.
+                ('checkins',        f'/v1/checkins/facility/{fc}',       {'startDateTime': (datetime.date.today()-datetime.timedelta(days=7)).isoformat()+' 00:00:00', 'endDateTime': datetime.date.today().isoformat()+' 23:59:59', 'limit':10}),
+                ('checkins_active', f'/v1/checkins/active/facility/{fc}', None),
             ]
             results = {}
             for name, ep, p in tests:
-                s, d = rgp_get(ep, u, k, p or None)
+                if name.startswith('checkins'):
+                    s, d, _raw = rgp_request(ep, u, k, p)
+                else:
+                    s, d = rgp_get(ep, u, k, p or None)
                 list_key = next((kk for kk, vv in d.items() if isinstance(vv, list)), None)
                 results[name] = {
                     'endpoint': ep, 'status': s, 'working': s==200,
