@@ -1176,15 +1176,35 @@ function loadCheckinHistory(){
   return fetch(proxyURL('/checkins/history') + rgpParams('days=30'))
     .then(function(r){ return r.json(); })
     .then(function(d){
-      DATA.checkinHistory = d;
       var buckets = d.hourly_distribution || {};
-      // RGP error (e.g. 400) OR a 200 with no check-in data → show why, don't
-      // silently render an empty heatmap.
-      if(d.rgp_status && d.rgp_status !== 200 || (!Object.keys(buckets).length && (d.total === 0 || d.error))){
-        showHeatmapUnavailable(d);
+      // Real RGP check-ins available → use them (the authoritative source).
+      if(!(d.rgp_status && d.rgp_status !== 200) && Object.keys(buckets).length){
+        DATA.checkinHistory = d;
+        renderHeatmap(buckets, d.day_of_week_counts || {});
+        var src = document.getElementById('heatmap-source');
+        if(src) src.textContent = '— '+Object.keys(buckets).length+' hour buckets from RGP check-ins';
         return;
       }
+      // Check-ins unavailable (RGP 400 / no data) → fall back to estimated
+      // floor traffic derived from sales + bookings.
+      return loadTrafficFallback();
+    })
+    .catch(function(){ return loadTrafficFallback(); });
+}
+
+// Fallback heatmap: estimated floor traffic from invoice + booking timestamps,
+// used while the RGP check-ins API is unavailable.
+function loadTrafficFallback(){
+  return fetch(proxyURL('/traffic/heatmap') + rgpParams('days=30'))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      DATA.checkinHistory = d;
+      var buckets = d.hourly_distribution || {};
+      if(!Object.keys(buckets).length){ showHeatmapUnavailable(d); return; }
       renderHeatmap(buckets, d.day_of_week_counts || {});
+      var df = d.derived_from || {};
+      var src = document.getElementById('heatmap-source');
+      if(src) src.textContent = '— estimated from '+(df.invoices||0)+' sales + '+(df.bookings||0)+' booked sessions (check-ins API pending)';
     })
     .catch(function(e){ showHeatmapUnavailable({error: (e && e.message) || 'proxy unreachable'}); });
 }

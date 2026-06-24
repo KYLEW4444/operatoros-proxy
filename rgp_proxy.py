@@ -184,6 +184,34 @@ def fetch_checkins(fc, user, key, start_date, end_date, max_pages=60):
             break
     return status, last, all_records
 
+def fetch_all(path, user, key, start_dt, end_dt, list_key, max_pages=40):
+    """
+    Fetch every record of a resource over a datetime window using the RGP
+    spec params (startDateTime/endDateTime + limit/page). Stops at the
+    reported pageTotal or the first short page. Returns a list of records.
+    """
+    out = []
+    for page in range(1, max_pages + 1):
+        s, d, _raw = rgp_request(path, user, key, {
+            'startDateTime': start_dt, 'endDateTime': end_dt, 'limit': 200, 'page': page,
+        })
+        if s != 200 or not isinstance(d, dict):
+            break
+        recs = d.get(list_key, [])
+        if isinstance(recs, dict): recs = list(recs.values())
+        if not isinstance(recs, list) or not recs:
+            break
+        out.extend(recs)
+        paging = d.get('rgpApiPaging') or {}
+        try:
+            if paging.get('pageTotal') and page >= int(paging['pageTotal']):
+                break
+        except (ValueError, TypeError):
+            pass
+        if len(recs) < 200:
+            break
+    return out
+
 class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
@@ -647,6 +675,72 @@ class Handler(BaseHTTPRequestHandler):
                     'path_tried': f'/v1/checkins/facility/{fc}',
                     'hint': CHECKINS_HINT,
                 })
+            return
+
+        # TRAFFIC HEATMAP (FALLBACK) — approximate floor traffic from invoice +
+        # booking timestamps while the RGP check-ins API is unavailable.
+        #   • Invoices: in-person sales (invoicePostDate) = desk/drop-in/retail
+        #     presence. ONLINE + voided invoices are excluded (not floor traffic).
+        #   • Bookings: scheduled session time (originalBookedTime) = class/party
+        #     attendance, weighted by participantCount and limited to sessions
+        #     that actually occurred inside the window.
+        # Returns the same shape as /checkins/history so the heatmap reuses it.
+        if path == '/traffic/heatmap':
+            days  = int((params.get('days') or ['30'])[0])
+            end   = datetime.date.today()
+            start = end - datetime.timedelta(days=days)
+            start_str, end_str = start.isoformat(), end.isoformat()
+            start_dt, end_dt = f'{start_str} 00:00:00', f'{end_str} 23:59:59'
+
+            hourly = {}; dow = {0:0,1:0,2:0,3:0,4:0,5:0,6:0}; daily = {}
+            sources = {'invoices': 0, 'bookings': 0}
+
+            def add_event(dtstr, weight=1):
+                m = CHECKIN_DT_RE.search(str(dtstr))
+                if not m:
+                    return False
+                ds, h = m.group(1), int(m.group(2))
+                if ds < start_str or ds > end_str:
+                    return False
+                daily[ds] = daily.get(ds, 0) + weight
+                if 0 <= h <= 23:
+                    hourly[h] = hourly.get(h, 0) + weight
+                try:
+                    dt = datetime.date.fromisoformat(ds)
+                    dow[dt.weekday()] = dow.get(dt.weekday(), 0) + weight
+                except ValueError:
+                    pass
+                return True
+
+            # In-person invoices → floor presence at the desk.
+            for inv in fetch_all(f'/v1/invoices/facility/{fc}', u, k, start_dt, end_dt, 'invoices'):
+                if inv.get('voidedInvoice'):
+                    continue
+                if str(inv.get('invtype', '')).upper() == 'ONLINE':
+                    continue
+                if add_event(inv.get('invoicePostDate')):
+                    sources['invoices'] += 1
+
+            # Booked sessions → class/party attendance (weighted by headcount).
+            for bk in fetch_all(f'/v1/bookings/facility/{fc}', u, k, start_dt, end_dt, 'bookings'):
+                if bk.get('cancelled'):
+                    continue
+                try:    pax = max(1, int(bk.get('participantCount', 1) or 1))
+                except (ValueError, TypeError): pax = 1
+                if add_event(bk.get('originalBookedTime'), pax):
+                    sources['bookings'] += 1
+
+            total = sum(hourly.values())
+            send_json(self, 200, {
+                'total': total, 'days': days,
+                'daily_counts': daily, 'hourly_distribution': hourly,
+                'day_of_week_counts': dow,
+                'avg_per_day': round(total / days, 1) if days else 0,
+                'source': 'estimated',
+                'derived_from': sources,
+                'note': 'Estimated floor traffic from in-person sales and booked sessions '
+                        '(RGP check-ins API not yet available).',
+            })
             return
 
         # DASHBOARD — single call for home screen numbers
