@@ -179,6 +179,12 @@ class Handler(BaseHTTPRequestHandler):
                 send_json(self, 401, {'error': 'Missing WIW email or password'})
                 return
             try:
+                # Disable cert verification (matches rgp_get) — avoids flaky
+                # SSL failures on Windows that made WIW sync unreliable.
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+
                 print(f'  WIW → logging in as {email}')
                 login_req = urllib.request.Request(
                     'https://api.login.wheniwork.com/login',
@@ -186,8 +192,7 @@ class Handler(BaseHTTPRequestHandler):
                     headers={'Content-Type': 'application/json', 'W-Key': 'knowledgebase'},
                     method='POST'
                 )
-                ctx = ssl.create_default_context()
-                with urllib.request.urlopen(login_req, timeout=15, context=ctx) as resp:
+                with urllib.request.urlopen(login_req, timeout=20, context=ctx) as resp:
                     login_data = json.loads(resp.read().decode())
                 print(f'  WIW ← login response keys: {list(login_data.keys())}')
                 token = login_data.get('token') or (login_data.get('login') or {}).get('token')
@@ -195,18 +200,47 @@ class Handler(BaseHTTPRequestHandler):
                     print(f'  WIW ✗ no token in response: {login_data}')
                     send_json(self, 401, {'error': 'WIW login failed', 'detail': login_data})
                     return
-                print(f'  WIW ✓ got token, fetching shifts')
+                print(f'  WIW ✓ got token, fetching users + shifts')
+
+                # Build user_id -> name map so each shift can be labelled with
+                # the staff member's name in the OperatorOS calendar.
+                users = {}
+                try:
+                    users_req = urllib.request.Request(
+                        'https://api.wheniwork.com/2/users',
+                        headers={'W-Token': token, 'Accept': 'application/json'}
+                    )
+                    with urllib.request.urlopen(users_req, timeout=20, context=ctx) as ur:
+                        udata = json.loads(ur.read().decode())
+                    for u in udata.get('users', []):
+                        nm = (str(u.get('first_name', '')).strip() + ' ' + str(u.get('last_name', '')).strip()).strip()
+                        users[str(u.get('id'))] = nm or u.get('email', '') or ('User ' + str(u.get('id')))
+                    print(f'  WIW ← {len(users)} users')
+                except Exception as ue:
+                    print(f'  WIW ⚠ user fetch failed (shifts will use ids): {ue}')
 
                 start = datetime.date.today().isoformat()
                 end   = (datetime.date.today() + datetime.timedelta(days=days)).isoformat()
                 shifts_req = urllib.request.Request(
                     f'https://api.wheniwork.com/2/shifts?start={start}&end={end}',
-                    headers={'W-Token': token}
+                    headers={'W-Token': token, 'Accept': 'application/json'}
                 )
-                with urllib.request.urlopen(shifts_req, timeout=15, context=ctx) as resp2:
+                with urllib.request.urlopen(shifts_req, timeout=20, context=ctx) as resp2:
                     shifts_data = json.loads(resp2.read().decode())
-                print(f'  WIW ← {len(shifts_data.get("shifts", []))} shifts')
-                send_json(self, 200, {'shifts': shifts_data.get('shifts', []), 'total': len(shifts_data.get('shifts', []))})
+                shifts = shifts_data.get('shifts', []) or []
+                # Some WIW responses embed related users — fold them into the map.
+                for u in shifts_data.get('users', []):
+                    nm = (str(u.get('first_name', '')).strip() + ' ' + str(u.get('last_name', '')).strip()).strip()
+                    users.setdefault(str(u.get('id')), nm or ('User ' + str(u.get('id'))))
+                # Attach a resolved staff_name to every shift for the UI.
+                for sh in shifts:
+                    uid = str(sh.get('user_id', sh.get('userId', '')))
+                    if uid in ('', '0', 'None'):
+                        sh['staff_name'] = 'Open shift'
+                    else:
+                        sh['staff_name'] = users.get(uid, 'User ' + uid)
+                print(f'  WIW ← {len(shifts)} shifts')
+                send_json(self, 200, {'shifts': shifts, 'users': users, 'total': len(shifts)})
             except urllib.error.HTTPError as e:
                 detail = e.read().decode()[:300]
                 print(f'  WIW ✗ HTTPError {e.code}: {detail}')

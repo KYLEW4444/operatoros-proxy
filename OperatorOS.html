@@ -516,6 +516,7 @@ tr:hover td{background:var(--surf2)}
     .sched-p-co{background:#7c3aed20;color:#9b6dff;border-left-color:#9b6dff}
     .sched-p-pt{background:#92400e20;color:#f5a623;border-left-color:#f5a623}
     .sched-p-cm{background:#0e749020;color:#00c2e0;border-left-color:#00c2e0}
+    .sched-p-wiw{background:#06283d;color:#22d3ee;border-left-color:#22d3ee;cursor:default}
     .sched-off-lbl{text-align:center;padding:8px;font-size:9px;color:var(--yel)}
     .sched-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;display:none;align-items:center;justify-content:center}
     .sched-overlay.on{display:flex}
@@ -868,7 +869,7 @@ var S = {
 var DATA = {
   members:[], atRisk:[], bookings:[], invoices:[],
   checkinHistory:{daily:{}, hourly:{}, dow:{}},
-  wiwShifts:[], dashboard:{},
+  wiwShifts:[], wiwUsers:{}, wiwIndex:{}, dashboard:{},
 };
 var SOCIAL_QUEUE = [];
 var CHAT_HISTORY = [];
@@ -1083,8 +1084,9 @@ function syncAll(){
       return loadDashboard();
     })
     .then(function(){
-      return Promise.all([loadMembers(true), loadBookings(true), loadRevenue(true), loadCheckinHistory()]);
+      return Promise.all([loadMembers(true), loadBookings(true), loadRevenue(true), loadCheckinHistory(), loadCheckins(true)]);
     })
+    .then(function(){ startRealtime(); })
     .catch(function(e){
       setDot('rgp','err','RGP ✗');
       document.getElementById('rgp-conn-txt').textContent = 'Proxy not reachable — check Settings';
@@ -1095,6 +1097,43 @@ function syncAll(){
       if(S.wiwEmail && S.wiwPass) syncWIW();
       else setSyncState(false);
     });
+}
+
+// ═══════════════════════════════════════════════════
+// REAL-TIME CHECK-INS — On Floor Now + Check-ins Today
+// Polled every 60s so the numbers stay live without a manual sync.
+// ═══════════════════════════════════════════════════
+function loadCheckins(silent){
+  if(!S.rgpUser || !S.rgpKey) return Promise.resolve();
+  return Promise.all([
+    fetch(proxyURL('/checkins/active') + rgpParams()).then(function(r){return r.json();}).catch(function(){return {};}),
+    fetch(proxyURL('/checkins/today')  + rgpParams()).then(function(r){return r.json();}).catch(function(){return {};})
+  ]).then(function(res){
+    var active = res[0] || {}, today = res[1] || {};
+    var now = (active.active_now != null) ? active.active_now : (active.count != null ? active.count : 0);
+    var cnt = (today.count != null) ? today.count : 0;
+    DATA.dashboard.active_now    = now;
+    DATA.dashboard.checkins_today = cnt;
+    var elNow   = document.getElementById('m-now');   if(elNow)   elNow.textContent   = now;
+    var elToday = document.getElementById('m-today'); if(elToday) elToday.textContent = cnt;
+  }).catch(function(){ /* keep last known values on transient errors */ });
+}
+
+// ═══════════════════════════════════════════════════
+// REAL-TIME POLLING — checkins every 60s, revenue every 5min,
+// WIW schedule re-sync every 5min. Guarded so it only starts once.
+// ═══════════════════════════════════════════════════
+var REALTIME_STARTED = false;
+function startRealtime(){
+  if(REALTIME_STARTED) return;
+  REALTIME_STARTED = true;
+  // Check-ins — live "On Floor Now" + "Check-ins Today" every 60 seconds.
+  setInterval(function(){ if(S.rgpUser && S.rgpKey) loadCheckins(true); }, 60000);
+  // Revenue / invoices — refresh automatically every 5 minutes (also updates
+  // the home "Revenue 30d" KPI via loadRevenue).
+  setInterval(function(){ if(S.rgpUser && S.rgpKey) loadRevenue(true); }, 300000);
+  // When I Work — keep the schedule in sync every 5 minutes.
+  setInterval(function(){ if(S.wiwEmail && S.wiwPass) syncWIW(true); }, 300000);
 }
 
 function loadDashboard(){
@@ -1244,20 +1283,9 @@ function renderPrograms(){
   }).join('');
 }
 
-function renderSchedule(){
-  if(!DATA.bookings.length && !DATA.wiwShifts.length){ return; }
-  var html = '<div class="kpis">'
-    +'<div class="kpi"><div class="kpi-label">Programs</div><div class="kpi-val b">'+DATA.bookings.length+'</div></div>'
-    +'<div class="kpi"><div class="kpi-label">WIW Shifts</div><div class="kpi-val g">'+DATA.wiwShifts.length+'</div></div>'
-    +'</div>';
-  html += '<div class="sec"><div class="sec-head">Programs from RGP</div><div style="overflow-x:auto">'
-    +'<table><thead><tr><th>Program</th><th>Bookings</th><th>Revenue</th></tr></thead><tbody>'
-    + DATA.bookings.slice(0,20).map(function(p){
-        return '<tr><td style="font-weight:700">'+p.name+'</td><td>'+p.bookings+'</td><td>$'+Math.round(p.revenue).toLocaleString()+'</td></tr>';
-      }).join('')
-    +'</tbody></table></div></div>';
-  document.getElementById('sched-body').innerHTML = html;
-}
+// Kept for backwards compatibility — the live Schedule tab is the calendar
+// grid (schedRenderCal), which now renders WIW shifts alongside local shifts.
+function renderSchedule(){ schedRenderCal(); }
 
 function loadRevenue(silent){
   if(!S.rgpUser){ if(!silent) showToast('Connect RGP in Settings first','wa'); return Promise.resolve(); }
@@ -1266,6 +1294,8 @@ function loadRevenue(silent){
     .then(function(d){
       DATA.invoices = d.invoices || [];
       var total = d.total_revenue || 0;
+      DATA.dashboard.revenue_30d = total;
+      var zr = document.getElementById('z-rev'); if(zr) zr.textContent = total > 0 ? '$'+Math.round(total/1000)+'K' : '—';
       document.getElementById('rev-kpis').innerHTML = [
         {l:'Total Revenue',v:'$'+Math.round(total).toLocaleString(),c:'b'},
         {l:'Invoices',v:d.total||0,c:'g'},
@@ -1347,18 +1377,20 @@ function renderDeadOpps(){
 // ═══════════════════════════════════════════════════
 // WIW
 // ═══════════════════════════════════════════════════
-function syncWIW(){
+function syncWIW(silent){
   if(!S.wiwEmail || !S.wiwPass){ setSyncState(false); return; }
-  fetch(proxyURL('/wiw/shifts')+'?email='+encodeURIComponent(S.wiwEmail)+'&password='+encodeURIComponent(S.wiwPass)+'&days=21')
+  fetch(proxyURL('/wiw/shifts')+'?email='+encodeURIComponent(S.wiwEmail)+'&password='+encodeURIComponent(S.wiwPass)+'&days=28')
   .then(function(r){return r.json();})
   .then(function(d){
     if(d.error) throw new Error(d.error);
     DATA.wiwShifts = d.shifts || [];
+    DATA.wiwUsers  = d.users  || {};
+    buildWiwIndex();
     setDot('wiw','live','WIW ✓ '+DATA.wiwShifts.length);
     document.getElementById('wiw-conn-txt').textContent = DATA.wiwShifts.length+' shifts synced';
     document.getElementById('wiw-conn-dot').className = 'conn-dot grn';
-    renderSchedule();
-    showToast('✓ Synced — '+DATA.wiwShifts.length+' WIW shifts','ok');
+    schedRenderCal();
+    if(!silent) showToast('✓ Synced — '+DATA.wiwShifts.length+' WIW shifts','ok');
   })
   .catch(function(err){
     setDot('wiw','err','WIW ✗');
@@ -1366,6 +1398,47 @@ function syncWIW(){
     document.getElementById('wiw-conn-dot').className = 'conn-dot red';
   })
   .finally(function(){ setSyncState(false); });
+}
+
+// Normalise WIW shifts into a name -> [{date,s,e,note}] index so they can be
+// rendered alongside the locally-built schedule in the calendar grid.
+function wiwParseDT(s){
+  if(!s) return null;
+  var d = new Date(String(s).replace(' ','T'));
+  function pad(n){ return (n<10?'0':'')+n; }
+  if(!isNaN(d.getTime())){
+    return { date:d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()), time:pad(d.getHours())+':'+pad(d.getMinutes()) };
+  }
+  var m = String(s).match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if(m) return { date:m[1]+'-'+m[2]+'-'+m[3], time:m[4]+':'+m[5] };
+  return null;
+}
+function buildWiwIndex(){
+  var idx = {};
+  (DATA.wiwShifts||[]).forEach(function(sh){
+    var a = wiwParseDT(sh.start_time || sh.start || sh.startTime);
+    var b = wiwParseDT(sh.end_time   || sh.end   || sh.endTime);
+    if(!a || !b) return;
+    var name = sh.staff_name || sh.user_name || 'Open shift';
+    (idx[name] = idx[name] || []).push({ date:a.date, s:a.time, e:b.time, note:(sh.notes||sh.note||'') });
+  });
+  DATA.wiwIndex = idx;
+}
+// Return WIW shifts for a given staff name on a given date (matches on full
+// name or first name, case-insensitively).
+function wiwShiftsFor(staffName, ds, usedNames){
+  var idx = DATA.wiwIndex || {};
+  var sn = String(staffName||'').toLowerCase().trim();
+  var snFirst = sn.split(' ')[0];
+  var out = [];
+  Object.keys(idx).forEach(function(k){
+    var kn = k.toLowerCase().trim(), kf = kn.split(' ')[0];
+    if(kn===sn || (snFirst && kf===snFirst)){
+      if(usedNames) usedNames[k] = true;
+      idx[k].forEach(function(sh){ if(sh.date===ds) out.push(sh); });
+    }
+  });
+  return out;
 }
 
 function setSyncState(loading){
@@ -1958,6 +2031,10 @@ function schedRenderCal(){
     h+='<div class="sched-day'+(it?' today':'')+'"><div>'+(it?'<strong>'+SCHED_DAYS[i]+'</strong>':SCHED_DAYS[i])+'</div><div class="sched-day-sub">'+d.toLocaleDateString('en-CA',{month:'short',day:'numeric'})+'</div></div>';
   });
 
+  // Track which WIW staff names get folded into a local STAFF row so the
+  // remaining WIW-only people can be shown as their own rows below.
+  var usedWiw={};
+
   STAFF.forEach(function(st){
     var onLeave=SCHED_TIMEOFF.some(function(t){if(t.staffId!==st.n||t.status==='pending')return false;var ws=schedFmt(days[0]),we=schedFmt(days[6]);return t.from<=we&&t.to>=ws;});
     h+='<div class="sched-staff-cell">'
@@ -1968,9 +2045,10 @@ function schedRenderCal(){
     days.forEach(function(d){
       var ds=schedFmt(d);
       var dsh=SCHED_SHIFTS.filter(function(s){return s.staffId===st.n&&s.date===ds;});
+      var wsh=wiwShiftsFor(st.n,ds,usedWiw);
       var isOff=SCHED_TIMEOFF.some(function(t){return t.staffId===st.n&&t.status==='approved'&&t.from<=ds&&t.to>=ds;});
       h+='<div class="sched-cell" onclick="schedOpenAddShift(\''+st.n+'\',\''+ds+'\')">';
-      if(isOff&&!dsh.length)h+='<div class="sched-off-lbl">Off</div>';
+      if(isOff&&!dsh.length&&!wsh.length)h+='<div class="sched-off-lbl">Off</div>';
       dsh.forEach(function(sh){
         var hh=schedHrs(sh);
         h+='<div class="sched-shift '+SCHED_PCLS[sh.pos]+'" onclick="event.stopPropagation();schedEditShift(\''+sh.id+'\')">'
@@ -1979,12 +2057,42 @@ function schedRenderCal(){
           +'<span style="display:block;font-size:9px;opacity:.7">'+hh.toFixed(1)+'h'+(sh.n?' · '+sh.n.slice(0,14):'')+'</span>'
           +'</div>';
       });
-      if(!dsh.length&&!isOff)h+='<div class="sched-plus">+</div>';
+      wsh.forEach(function(sh){ h+=schedWiwChip(sh); });
+      if(!dsh.length&&!wsh.length&&!isOff)h+='<div class="sched-plus">+</div>';
       h+='</div>';
     });
   });
+
+  // WIW-only staff — people who have When I Work shifts but no local roster row.
+  var idx=DATA.wiwIndex||{};
+  Object.keys(idx).forEach(function(name){
+    if(usedWiw[name]) return;
+    var hasInWeek=idx[name].some(function(sh){return days.some(function(d){return schedFmt(d)===sh.date;});});
+    if(!hasInWeek) return;
+    h+='<div class="sched-staff-cell">'
+      +'<div class="sched-av" style="background:#0e749020;color:#22d3ee">'+(name[0]||'?')+'</div>'
+      +'<div><div style="font-size:11px;font-weight:700">'+name+'</div><div style="font-size:10px;color:#22d3ee">When I Work</div></div>'
+      +'</div>';
+    days.forEach(function(d){
+      var ds=schedFmt(d);
+      var wsh=idx[name].filter(function(sh){return sh.date===ds;});
+      h+='<div class="sched-cell" style="cursor:default">';
+      wsh.forEach(function(sh){ h+=schedWiwChip(sh); });
+      h+='</div>';
+    });
+  });
+
   g.innerHTML=h;
   schedRenderBadges();
+}
+
+// Read-only chip for a shift synced from When I Work.
+function schedWiwChip(sh){
+  return '<div class="sched-shift sched-p-wiw" title="From When I Work'+(sh.note?' — '+sh.note.replace(/"/g,'')+'':'')+'" onclick="event.stopPropagation();showToast(\'Synced from When I Work — edit in the WIW app\',\'\')">'
+    +'<span style="display:block;font-size:8px;opacity:.85;font-weight:800;letter-spacing:.05em">WIW</span>'
+    +schedFmtT(sh.s)+'–'+schedFmtT(sh.e)
+    +(sh.note?'<span style="display:block;font-size:9px;opacity:.7">'+sh.note.slice(0,14)+'</span>':'')
+    +'</div>';
 }
 
 function schedOpenAddShift(staffId,date){
