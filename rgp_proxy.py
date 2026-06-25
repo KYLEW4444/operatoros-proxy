@@ -4,7 +4,7 @@ Credentials load from rgp_proxy_config.json automatically.
 Just run this file — no setup needed.
 """
 import json, urllib.request, urllib.parse, base64, os, datetime, ssl, re, time, threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rgp_proxy_config.json')
 
@@ -467,7 +467,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == '/health':
-            send_json(self, 200, {'status': 'ok', 'version': '3.3', 'service': 'OperatorOS RGP Proxy'})
+            send_json(self, 200, {'status': 'ok', 'version': '3.5', 'service': 'OperatorOS RGP Proxy'})
             return
 
         # CONFIG STATUS — booleans only, so the UI can tell whether credentials
@@ -745,48 +745,38 @@ class Handler(BaseHTTPRequestHandler):
             last_month_end = this_month_start - datetime.timedelta(days=1)
             last_month_start = last_month_end.replace(day=1)
 
-            s1, d1 = rgp_get(f'/v1/invoices/facility/{fc}', u, k, {
-                'startDate': last_month_start.isoformat(),
-                'endDate':   today.isoformat(),
-                'orderBy':   'invoicePostDate',
-                'orderDir':  'desc',
-                'pageSize':  500,
-            })
-            s2, d2 = rgp_get(f'/v1/bookings/facility/{fc}', u, k, {
-                'startDate': last_month_start.isoformat(),
-                'endDate':   today.isoformat(),
-                'orderBy':   'bookingDate',
-                'orderDir':  'desc',
-                'pageSize':  500,
-            })
+            # startDate/endDate are silently ignored by RGP — must use
+            # startDateTime/endDateTime via fetch_all to get current records.
+            raw_inv = fetch_all(f'/v1/invoices/facility/{fc}', u, k,
+                                f'{last_month_start.isoformat()} 00:00:00',
+                                f'{today.isoformat()} 23:59:59', 'invoices')
+            raw_book = fetch_all(f'/v1/bookings/facility/{fc}', u, k,
+                                 f'{last_month_start.isoformat()} 00:00:00',
+                                 f'{today.isoformat()} 23:59:59', 'bookings')
 
             this_month_rev, last_month_rev = 0.0, 0.0
             this_month_inv, last_month_inv = 0, 0
-            if s1 == 200:
-                raw = d1.get('invoices', d1.get('invoice', d1.get('data', [])))
-                for i in raw:
-                    if i.get('voidedInvoice', 0):
-                        continue
-                    dt = (i.get('invoicePostDate') or '')[:10]
-                    amt = float(i.get('amount', 0) or 0)
-                    if dt >= this_month_start.isoformat():
-                        this_month_rev += amt; this_month_inv += 1
-                    elif dt >= last_month_start.isoformat():
-                        last_month_rev += amt; last_month_inv += 1
+            for i in raw_inv:
+                if i.get('voidedInvoice', 0):
+                    continue
+                dt = (i.get('invoicePostDate') or '')[:10]
+                amt = float(i.get('amount', 0) or 0)
+                if dt >= this_month_start.isoformat():
+                    this_month_rev += amt; this_month_inv += 1
+                elif dt >= last_month_start.isoformat():
+                    last_month_rev += amt; last_month_inv += 1
 
             this_month_book, last_month_book = 0, 0
             this_month_cancel, last_month_cancel = 0, 0
-            if s2 == 200:
-                raw2 = d2.get('bookings', d2.get('booking', d2.get('data', [])))
-                for b in raw2:
-                    dt = (b.get('bookingDate') or '')[:10]
-                    cancelled = b.get('cancelled') or b.get('isCancelled')
-                    if dt >= this_month_start.isoformat():
-                        this_month_book += 1
-                        if cancelled: this_month_cancel += 1
-                    elif dt >= last_month_start.isoformat():
-                        last_month_book += 1
-                        if cancelled: last_month_cancel += 1
+            for b in raw_book:
+                dt = (b.get('bookingDate') or '')[:10]
+                cancelled = b.get('cancelled') or b.get('isCancelled')
+                if dt >= this_month_start.isoformat():
+                    this_month_book += 1
+                    if cancelled: this_month_cancel += 1
+                elif dt >= last_month_start.isoformat():
+                    last_month_book += 1
+                    if cancelled: last_month_cancel += 1
 
             send_json(self, 200, {
                 'this_month': {
@@ -1014,8 +1004,13 @@ if __name__ == '__main__':
     # locally bind 127.0.0.1 only so the proxy isn't exposed on the network.
     # HOST env var overrides if needed.
     host = os.environ.get('HOST') or ('0.0.0.0' if is_hosted() else '127.0.0.1')
-    server = HTTPServer((host, port), Handler)
-    print('OperatorOS RGP Proxy v3.4')
+    # Threaded so each (HTTP/1.1 keep-alive) connection gets its own thread.
+    # A single-threaded server serialized the burst of concurrent calls the app
+    # fires on sync, which made syncs appear to hang forever. daemon_threads lets
+    # the process exit cleanly without waiting on in-flight requests.
+    server = ThreadingHTTPServer((host, port), Handler)
+    server.daemon_threads = True
+    print('OperatorOS RGP Proxy v3.5')
     print(f'Running on http://{host}:{port}' + ('  [HOSTED]' if is_hosted() else '  [local]'))
     cfg0 = load_config()
     print('Credentials source: ' + ('environment variables' if is_hosted() else 'rgp_proxy_config.json')
