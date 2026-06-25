@@ -1,0 +1,2 @@
+# OperatorOS proxy uses only the Python standard library — no third-party deps.
+# This file marks the repo as a Python project for the Railway / Nixpacks builder.

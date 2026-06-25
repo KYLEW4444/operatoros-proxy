@@ -8,16 +8,44 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rgp_proxy_config.json')
 
+# config-key  ->  environment-variable name. On Railway (and any hosted deploy)
+# credentials come from environment variables; locally they come from the
+# config file. Env vars take precedence over the file.
+ENV_MAP = {
+    'rgp_user':      'RGP_USER',
+    'rgp_key':       'RGP_KEY',
+    'facility_code': 'FACILITY_CODE',
+    'claude_key':    'CLAUDE_KEY',
+    'wiw_email':     'WIW_EMAIL',
+    'wiw_password':  'WIW_PASSWORD',
+    'gym':           'GYM',
+    'location':      'LOCATION',
+}
+
 def load_config():
+    """Merge credentials from the local file (if any) and environment variables.
+    Environment variables win, so a hosted deploy (Railway) is driven entirely by
+    its env vars while local dev uses the file."""
+    cfg = {}
     try:
         with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
-    except:
-        return {}
+            cfg.update(json.load(f) or {})
+    except Exception:
+        pass
+    for ck, ev in ENV_MAP.items():
+        val = os.environ.get(ev)
+        if val not in (None, ''):
+            cfg[ck] = val
+    return cfg
 
 def save_config(cfg):
     with open(CONFIG_FILE, 'w') as f:
         json.dump(cfg, f, indent=2)
+
+def is_hosted():
+    """True when running on Railway (or another PaaS) rather than locally."""
+    return bool(os.environ.get('RAILWAY_ENVIRONMENT') or os.environ.get('RAILWAY_PROJECT_ID')
+                or os.environ.get('RAILWAY_SERVICE_ID') or os.environ.get('RAILWAY_STATIC_URL'))
 
 # ── Rate limiting ──────────────────────────────────────────────────────────
 # Simple in-memory sliding window per client IP so no single caller can hammer
@@ -264,6 +292,14 @@ class Handler(BaseHTTPRequestHandler):
         ts = datetime.datetime.now().strftime('%H:%M:%S')
         print(f'[{ts}] {self.path[:80]}')
 
+    def client_ip(self):
+        """Real client IP for rate limiting. Behind Railway the socket peer is the
+        router, so prefer the first X-Forwarded-For hop when present."""
+        xff = self.headers.get('X-Forwarded-For', '')
+        if xff:
+            return xff.split(',')[0].strip()
+        return self.client_address[0]
+
     def do_OPTIONS(self):
         self.send_response(200)
         for k, v in CORS.items(): self.send_header(k, v)
@@ -273,33 +309,75 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
-        if rate_limited(self.client_address[0]):
+        if rate_limited(self.client_ip()):
             send_json(self, 429, {'error': 'Rate limit exceeded — slow down'},
                       extra_headers={'Retry-After': str(RATE_LIMIT_WINDOW)})
             return
 
-        # CONFIG SET — store credentials in the proxy config so they live on the
-        # machine, never in the browser. Localhost-only: never accept secret
-        # writes from the network.
+        # CONFIG SET — store credentials so they live on the server, never in the
+        # browser. Two backends:
+        #   • Local: written to rgp_proxy_config.json (persists across restarts).
+        #   • Hosted (Railway): set as process environment variables so they take
+        #     effect immediately. NOTE: Railway's filesystem/process env is reset
+        #     on redeploy, so for permanent hosted creds also set them in the
+        #     Railway dashboard (or via `railway variables`). load_config() reads
+        #     env vars first, so dashboard vars and these runtime vars both work.
+        # Auth: localhost is trusted. Remote callers (the public Railway URL) must
+        # present the admin token (ADMIN_TOKEN env var) so the endpoint is not an
+        # open door to overwrite credentials.
         if path == '/config/set':
-            if self.client_address[0] not in ('127.0.0.1', '::1', 'localhost'):
-                send_json(self, 403, {'error': 'Config can only be set from localhost'})
-                return
+            real_ip  = self.client_address[0]
+            is_local = real_ip in ('127.0.0.1', '::1', 'localhost')
             try:
                 length = int(self.headers.get('Content-Length', 0))
                 body = json.loads(self.rfile.read(length).decode()) if length else {}
-                cfg = load_config()
+            except Exception:
+                body = {}
+            if not is_local:
+                admin = os.environ.get('ADMIN_TOKEN', '')
+                provided = self.headers.get('X-Admin-Token', '') or body.get('admin_token', '')
+                if not admin or provided != admin:
+                    send_json(self, 403, {'error': 'Forbidden',
+                                          'message': 'Admin token required to set credentials on the hosted proxy'})
+                    return
+            try:
                 allowed = ('rgp_user', 'rgp_key', 'facility_code', 'claude_key',
                            'wiw_email', 'wiw_password', 'gym', 'location')
+                applied = {}
                 for key in allowed:
                     if key in body and str(body[key]) != '':
-                        cfg[key] = body[key]
-                save_config(cfg)
-                send_json(self, 200, {'ok': True, 'status': {
-                    'rgp':    bool(cfg.get('rgp_user') and cfg.get('rgp_key')),
-                    'claude': bool(cfg.get('claude_key')),
-                    'wiw':    bool(cfg.get('wiw_email') and cfg.get('wiw_password')),
-                }})
+                        applied[key] = str(body[key])
+                        # Set as a real process env var (satisfies "store as env
+                        # variables") so load_config() picks it up immediately.
+                        os.environ[ENV_MAP[key]] = str(body[key])
+                persisted = False
+                if is_local:
+                    # Only persist to disk locally — the hosted filesystem is
+                    # ephemeral so writing there would be misleading.
+                    try:
+                        cfg = {}
+                        try:
+                            with open(CONFIG_FILE, 'r') as f: cfg = json.load(f) or {}
+                        except Exception: pass
+                        cfg.update(applied)
+                        save_config(cfg)
+                        persisted = True
+                    except Exception:
+                        persisted = False
+                cfg = load_config()
+                send_json(self, 200, {
+                    'ok': True,
+                    'persisted_to_file': persisted,
+                    'hosted': is_hosted(),
+                    'note': ('Saved to local config file.' if persisted else
+                             'Applied to the running server. On Railway, also set these as '
+                             'dashboard environment variables so they survive a redeploy.'),
+                    'status': {
+                        'rgp':    bool(cfg.get('rgp_user') and cfg.get('rgp_key')),
+                        'claude': bool(cfg.get('claude_key')),
+                        'wiw':    bool(cfg.get('wiw_email') and cfg.get('wiw_password')),
+                    },
+                })
             except Exception as e:
                 send_json(self, 500, {'error': 'Could not save config', 'detail': str(e)})
             return
@@ -378,7 +456,7 @@ class Handler(BaseHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         path   = parsed.path
 
-        if rate_limited(self.client_address[0]):
+        if rate_limited(self.client_ip()):
             send_json(self, 429, {'error': 'Rate limit exceeded — slow down'},
                       extra_headers={'Retry-After': str(RATE_LIMIT_WINDOW)})
             return
@@ -397,6 +475,7 @@ class Handler(BaseHTTPRequestHandler):
                 'wiw':    bool(cfg.get('wiw_email') and cfg.get('wiw_password')),
                 'facility_code': cfg.get('facility_code', 'ASP'),
                 'gym':    cfg.get('gym', ''),
+                'hosted': is_hosted(),
             })
             return
 
@@ -926,12 +1005,18 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
-    # SECURITY: bind to localhost only — the proxy must not be reachable from
-    # other machines on the network.
-    server = HTTPServer(('127.0.0.1', port), Handler)
-    print('OperatorOS RGP Proxy v3.3')
-    print(f'Running on http://127.0.0.1:{port} (localhost only)')
-    print('Credentials loaded from rgp_proxy_config.json (never stored in the browser)')
+    # Hosted (Railway) must bind 0.0.0.0 to be reachable through the router;
+    # locally bind 127.0.0.1 only so the proxy isn't exposed on the network.
+    # HOST env var overrides if needed.
+    host = os.environ.get('HOST') or ('0.0.0.0' if is_hosted() else '127.0.0.1')
+    server = HTTPServer((host, port), Handler)
+    print('OperatorOS RGP Proxy v3.4')
+    print(f'Running on http://{host}:{port}' + ('  [HOSTED]' if is_hosted() else '  [local]'))
+    cfg0 = load_config()
+    print('Credentials source: ' + ('environment variables' if is_hosted() else 'rgp_proxy_config.json')
+          + f"  (RGP={'set' if cfg0.get('rgp_key') else 'MISSING'},"
+          + f" Claude={'set' if cfg0.get('claude_key') else 'unset'},"
+          + f" WIW={'set' if cfg0.get('wiw_email') else 'unset'})")
     print(f'Rate limit: {RATE_LIMIT_MAX} requests / {RATE_LIMIT_WINDOW}s per IP')
     print('Keep this window open while using OperatorOS.')
     print('---')
