@@ -541,7 +541,10 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as ue:
                     print(f'  WIW ⚠ user fetch failed (shifts will use ids): {ue}')
 
-                start = datetime.date.today().isoformat()
+                # Start 7 days in the past so the current week's already-passed
+                # shifts are included — without this, Mon/Tue shifts disappear
+                # mid-week when the user views the current week in OperatorOS.
+                start = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
                 end   = (datetime.date.today() + datetime.timedelta(days=days)).isoformat()
                 shifts_req = urllib.request.Request(
                     f'https://api.wheniwork.com/2/shifts?start={start}&end={end}',

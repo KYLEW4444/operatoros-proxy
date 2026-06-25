@@ -923,6 +923,11 @@ function rgpParams(extra){
   return '?'+p;
 }
 
+// Proxy fetch with a HARD timeout. A slow or stuck RGP/WIW call can otherwise
+// leave a fetch pending forever, which froze the Sync spinner and blocked the
+// WIW indicator. Defaults to 25s (RGP pagination can be legitimately slow).
+function pfetch(url, ms){ return fetch(url, {cache:'no-store', signal:AbortSignal.timeout(ms||25000)}); }
+
 // ═══════════════════════════════════════════════════
 // LOGIN
 // ═══════════════════════════════════════════════════
@@ -1192,10 +1197,16 @@ function syncAll(){
   }
   setSyncState(true);
   setDot('rgp','','');
-  setDot('wiw','','');
 
-  // 1. Health check
-  fetch(proxyURL('/health'), {signal:AbortSignal.timeout(6000)})
+  // WIW syncs INDEPENDENTLY of the RGP pull. Previously it ran only in the RGP
+  // chain's .finally, so a slow RGP sync left the WIW dot grey (and a hung RGP
+  // fetch meant .finally never ran at all). It no longer drives the spinner.
+  if(CONFIG_STATUS.wiw) syncWIW(true);
+  else setDot('wiw','','WIW');
+
+  // RGP: health check, then load everything. Every fetch has a timeout, so the
+  // chain always settles and .finally ALWAYS clears the spinner.
+  fetch(proxyURL('/health'), {cache:'no-store', signal:AbortSignal.timeout(6000)})
     .then(function(r){ return r.json(); })
     .then(function(){
       setDot('rgp','live','RGP ✓');
@@ -1213,10 +1224,7 @@ function syncAll(){
       document.getElementById('rgp-conn-dot').className = 'conn-dot red';
       showToast('RGP proxy not running — deploy to Railway or start locally','er');
     })
-    .finally(function(){
-      if(S.wiwEmail && S.wiwPass) syncWIW();
-      else setSyncState(false);
-    });
+    .finally(function(){ setSyncState(false); });
 }
 
 // ═══════════════════════════════════════════════════
@@ -1226,8 +1234,8 @@ function syncAll(){
 function loadCheckins(silent){
   if(!S.rgpUser || !S.rgpKey) return Promise.resolve();
   return Promise.all([
-    fetch(proxyURL('/checkins/active') + rgpParams()).then(function(r){return r.json();}).catch(function(){return {};}),
-    fetch(proxyURL('/checkins/today')  + rgpParams()).then(function(r){return r.json();}).catch(function(){return {};})
+    pfetch(proxyURL('/checkins/active') + rgpParams()).then(function(r){return r.json();}).catch(function(){return {};}),
+    pfetch(proxyURL('/checkins/today')  + rgpParams()).then(function(r){return r.json();}).catch(function(){return {};})
   ]).then(function(res){
     var active = res[0] || {}, today = res[1] || {};
     var now = (active.active_now != null) ? active.active_now : (active.count != null ? active.count : 0);
@@ -1274,7 +1282,7 @@ function setTodayInvoices(d){
 
 function loadDashboard(){
   // Load members count directly from /members endpoint
-  return fetch(proxyURL('/members') + rgpParams())
+  return pfetch(proxyURL('/members') + rgpParams())
     .then(function(r){ return r.json(); })
     .then(function(d){
       var members = d.members || [];
@@ -1297,7 +1305,7 @@ function loadDashboard(){
       renderMemberTable(members);
 
       // Now load revenue from invoices
-      return fetch(proxyURL('/invoices') + rgpParams());
+      return pfetch(proxyURL('/invoices') + rgpParams());
     })
     .then(function(r){ return r.json(); })
     .then(function(d){
@@ -1311,7 +1319,7 @@ function loadDashboard(){
 }
 
 function loadCheckinHistory(){
-  return fetch(proxyURL('/checkins/history') + rgpParams('days=30'))
+  return pfetch(proxyURL('/checkins/history') + rgpParams('days=30'))
     .then(function(r){ return r.json(); })
     .then(function(d){
       var buckets = d.hourly_distribution || {};
@@ -1333,7 +1341,7 @@ function loadCheckinHistory(){
 // Fallback heatmap: estimated floor traffic from invoice + booking timestamps,
 // used while the RGP check-ins API is unavailable.
 function loadTrafficFallback(){
-  return fetch(proxyURL('/traffic/heatmap') + rgpParams('days=30'))
+  return pfetch(proxyURL('/traffic/heatmap') + rgpParams('days=30'))
     .then(function(r){ return r.json(); })
     .then(function(d){
       DATA.checkinHistory = d;
@@ -1367,7 +1375,7 @@ function showHeatmapUnavailable(d){
 function loadMembers(silent){
   if(!S.rgpUser){ if(!silent) showToast('Connect RGP in Settings first','wa'); return Promise.resolve(); }
   if(!silent) showToast('Loading member roster...','');
-  return fetch(proxyURL('/members') + rgpParams())
+  return pfetch(proxyURL('/members') + rgpParams())
     .then(function(r){ return r.json(); })
     .then(function(d){
       DATA.members = d.members || [];
@@ -1427,7 +1435,7 @@ function renderMemberTable(members){
 
 function loadBookings(silent){
   if(!S.rgpUser){ if(!silent) showToast('Connect RGP in Settings first','wa'); return Promise.resolve(); }
-  return fetch(proxyURL('/bookings/summary') + rgpParams())
+  return pfetch(proxyURL('/bookings/summary') + rgpParams())
     .then(function(r){ return r.json(); })
     .then(function(d){
       DATA.bookings = d.programs || [];
@@ -1471,7 +1479,7 @@ function renderSchedule(){ schedRenderCal(); }
 
 function loadRevenue(silent){
   if(!S.rgpUser){ if(!silent) showToast('Connect RGP in Settings first','wa'); return Promise.resolve(); }
-  return fetch(proxyURL('/invoices') + rgpParams())
+  return pfetch(proxyURL('/invoices') + rgpParams())
     .then(function(r){ return r.json(); })
     .then(function(d){
       DATA.invoices = d.invoices || [];
@@ -1561,8 +1569,11 @@ function renderDeadOpps(){
 // WIW
 // ═══════════════════════════════════════════════════
 function syncWIW(silent){
-  if(!CONFIG_STATUS.wiw){ setSyncState(false); return; }
-  fetch(proxyURL('/wiw/shifts')+'?days=28&_='+Date.now(), {cache:'no-store'})
+  // Not configured → leave the dot neutral (grey). Never touches the global
+  // Sync spinner — WIW is decoupled from the RGP sync.
+  if(!CONFIG_STATUS.wiw){ setDot('wiw','','WIW'); return; }
+  setDot('wiw','warn','WIW …');
+  pfetch(proxyURL('/wiw/shifts')+'?days=35&_='+Date.now(), 20000)
   .then(function(r){return r.json();})
   .then(function(d){
     // Surface the real WIW reason (e.g. "Incorrect username and/or password")
@@ -1583,8 +1594,7 @@ function syncWIW(silent){
     document.getElementById('wiw-conn-txt').textContent = 'Sync failed — '+reason;
     document.getElementById('wiw-conn-dot').className = 'conn-dot red';
     if(!silent) showToast('WIW sync failed — '+reason,'er');
-  })
-  .finally(function(){ setSyncState(false); });
+  });
 }
 
 // Normalise WIW shifts into a name -> [{date,s,e,note}] index so they can be
