@@ -1507,8 +1507,8 @@ function loadRevenue(silent){
       var todayCnt = d.today_count != null ? d.today_count : 0;
       document.getElementById('rev-kpis').innerHTML = [
         {l:'Revenue (30d)',v:'$'+Math.round(total).toLocaleString(),c:'b'},
-        {l:'Today's Revenue',v:'$'+Math.round(todayRev).toLocaleString(),c:'g'},
-        {l:'Today's Invoices',v:todayCnt,c:'g'},
+        {l:'Today Revenue',v:'$'+Math.round(todayRev).toLocaleString(),c:'g'},
+        {l:'Today Invoices',v:todayCnt,c:'g'},
         {l:'Valid Invoices (30d)',v:d.valid_count||0,c:''},
       ].map(function(k){return '<div class="kpi"><div class="kpi-label">'+k.l+'</div><div class="kpi-val '+(k.c||'')+'">'+k.v+'</div></div>';}).join('');
       // Kick off YTD load in parallel — fills in when ready
