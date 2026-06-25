@@ -287,6 +287,10 @@ def fetch_all(path, user, key, start_dt, end_dt, list_key, max_pages=40):
     return out
 
 class Handler(BaseHTTPRequestHandler):
+    # HTTP/1.1 so Railway's edge proxy can keep the connection alive. Every
+    # response sets Content-Length (send_json + do_OPTIONS), which HTTP/1.1
+    # keep-alive requires.
+    protocol_version = 'HTTP/1.1'
 
     def log_message(self, fmt, *args):
         ts = datetime.datetime.now().strftime('%H:%M:%S')
@@ -303,6 +307,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(200)
         for k, v in CORS.items(): self.send_header(k, v)
+        self.send_header('Content-Length', '0')   # required for HTTP/1.1 keep-alive
         self.end_headers()
 
     def do_POST(self):
