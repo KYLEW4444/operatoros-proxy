@@ -68,6 +68,7 @@ Railway deployed URL: `https://operatoros-proxy-production.up.railway.app`
 - Rate limit: 240 requests / 60s per IP (in-memory sliding window)
 - RGP and WIW: SSL cert verification disabled (avoids Windows/Railway TLS flakiness; Chrome unaffected)
 - All Claude calls (chat, actions, intel, social) go through the proxy's `/ai/call` — the browser never holds or sends the Claude key. `CONFIG_STATUS.claude` is the sole availability gate (a boolean from `/config/status`).
+- `/config/set` routing: the browser always probes the LOCAL proxy first (file write persists). Railway proxy writes only to process env (lost on container restart) and requires `ADMIN_TOKEN` for remote callers. For permanent Railway credentials, set them via the Railway dashboard env vars (`CLAUDE_KEY`, `WIW_EMAIL`, `WIW_PASSWORD`).
 
 ### Railway Environment Variables Required
 

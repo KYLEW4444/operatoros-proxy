@@ -804,8 +804,8 @@ tr:hover td{background:var(--surf2)}
           <div class="hint">Deploy rgp_proxy_hosted.py to Railway for a permanent hosted connection — no .bat file ever again. Or run it locally for testing.</div>
         </div>
         <div class="field-row">
-          <div class="field"><label>RGP Username</label><input type="text" id="s-rgpuser" placeholder="ASPIR"></div>
-          <div class="field"><label>RGP API Key</label><input type="password" id="s-rgpkey" placeholder="••••••••"></div>
+          <div class="field"><label>RGP Username</label><input type="text" id="s-rgpuser" placeholder="ASPIR" data-ph="ASPIR"></div>
+          <div class="field"><label>RGP API Key</label><input type="password" id="s-rgpkey" placeholder="••••••••" data-ph="••••••••"></div>
         </div>
         <div class="field-row">
           <div class="field"><label>Facility Code — Milton</label><input type="text" id="s-fc1" placeholder="ASP"></div>
@@ -820,11 +820,11 @@ tr:hover td{background:var(--surf2)}
         </div>
       </div></div>
       <div class="sec"><div class="sec-head">When I Work</div><div class="sec-body" style="max-width:480px">
-        <div class="field"><label>Email</label><input type="email" id="s-wiwmail" placeholder="you@gym.com"></div>
-        <div class="field"><label>Password</label><input type="password" id="s-wiwpass" placeholder="••••••••"></div>
+        <div class="field"><label>Email</label><input type="email" id="s-wiwmail" placeholder="you@gym.com" data-ph="you@gym.com"></div>
+        <div class="field"><label>Password</label><input type="password" id="s-wiwpass" placeholder="••••••••" data-ph="••••••••"></div>
       </div></div>
       <div class="sec"><div class="sec-head">Claude AI</div><div class="sec-body" style="max-width:480px">
-        <div class="field"><label>Anthropic API Key</label><input type="password" id="s-claude" placeholder="sk-ant-••••••••"></div>
+        <div class="field"><label>Anthropic API Key</label><input type="password" id="s-claude" placeholder="sk-ant-••••••••" data-ph="sk-ant-••••••••"></div>
         <div class="hint">Used for action suggestions, social post drafts, and the AI chat sidebar</div>
       </div></div>
       <div class="sec"><div class="sec-head">Users & PINs</div><div class="sec-body" style="max-width:480px">
@@ -1068,24 +1068,42 @@ function saveSettings(){
   localStorage.setItem('ops_v3', JSON.stringify(save));
   document.getElementById('tb-gym').textContent = S.gym;
 
-  // Secrets (RGP, Claude, WIW) are sent ONCE to the proxy to be stored in its
-  // config file — they are never kept in localStorage or sent on API calls.
+  // Secrets are sent once to the proxy to be stored server-side.
+  // ROUTING: always try the local proxy first for /config/set. When ACTIVE_PROXY
+  // is Railway, the save silently fails — Railway returns 403 without ADMIN_TOKEN,
+  // or writes only to process env (lost on container restart). The local proxy
+  // writes to rgp_proxy_config.json which persists across restarts.
   var secrets = {facility_code:fc(), gym:S.gym, location:S.location};
   var ru=v('s-rgpuser'), rk=v('s-rgpkey'), ck=v('s-claude'), wm=v('s-wiwmail'), wp=v('s-wiwpass');
   if(ru) secrets.rgp_user=ru; if(rk) secrets.rgp_key=rk; if(ck) secrets.claude_key=ck;
   if(wm) secrets.wiw_email=wm; if(wp) secrets.wiw_password=wp;
 
-  fetch(proxyURL('/config/set'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(secrets)})
-    .then(function(r){ return r.json(); })
-    .then(function(){
-      ['s-rgpuser','s-rgpkey','s-claude','s-wiwmail','s-wiwpass'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
-      return loadConfigStatus();
-    })
-    .then(function(){ showToast('Settings saved ✓ — credentials stored securely in proxy config','ok'); })
-    .catch(function(){ showToast('Saved prefs, but proxy unreachable — start it to store credentials','wa'); });
+  var _body = JSON.stringify(secrets);
+  var _opts = {method:'POST', headers:{'Content-Type':'application/json'}, body:_body};
+  function _doSet(base){
+    return fetch(base.replace(/\/$/,'') + '/config/set', _opts)
+      .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, d:d}; }); });
+  }
+  var _configPromise = (!ACTIVE_PROXY || ACTIVE_PROXY === LOCAL_PROXY)
+    ? _doSet(LOCAL_PROXY)
+    : fetch(LOCAL_PROXY + '/health', {cache:'no-store', signal:AbortSignal.timeout(2000)})
+        .then(function(r){ return r.ok ? _doSet(LOCAL_PROXY) : _doSet(ACTIVE_PROXY); })
+        .catch(function(){ return _doSet(ACTIVE_PROXY); });
 
-  var ok = document.getElementById('save-ok');
-  if(ok){ ok.style.display='inline'; setTimeout(function(){ok.style.display='none';},2500); }
+  _configPromise.then(function(res){
+    if(!res.ok) throw new Error((res.d && (res.d.message || res.d.error)) || 'HTTP error');
+    ['s-rgpuser','s-rgpkey','s-claude','s-wiwmail','s-wiwpass'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
+    var ok = document.getElementById('save-ok');
+    if(ok){ ok.style.display='inline'; setTimeout(function(){ok.style.display='none';},2500); }
+    if(res.d && res.d.hosted && !res.d.persisted_to_file){
+      showToast('Saved to Railway session only — set as env vars in Railway dashboard to make permanent','wa');
+    } else {
+      showToast('Settings saved ✓ — credentials stored securely in proxy config','ok');
+    }
+    return loadConfigStatus();
+  }).catch(function(err){
+    showToast('Could not save credentials — '+(err.message||'is the local proxy running?'),'er');
+  });
 }
 
 function loadSettings(){
