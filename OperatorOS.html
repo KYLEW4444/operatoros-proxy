@@ -387,7 +387,7 @@ tr:hover td{background:var(--surf2)}
       </div>
 
       <div class="sched-subpage on" id="sp-calendar">
-        <div style="margin-bottom:10px"><button class="btn btn-sec btn-sm" onclick="schedShowPage('calendar')" style="display:none" id="sched-back-noop"></button></div>
+        <div id="wiw-sched-banner" style="display:none;padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:10px"></div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
           <button class="btn btn-sec btn-sm" onclick="schedChangeWeek(-1)">← Prev</button>
           <div style="font-size:15px;font-weight:700;flex:1" id="sched-wk-label">—</div>
@@ -1147,6 +1147,13 @@ function nav(name, el){
   if(pg) pg.classList.add('on');
   if(el) el.classList.add('on');
   document.getElementById('sidebar').classList.add('open');
+  // When opening the schedule, re-render with current WIW data and kick off
+  // a fresh sync so shifts are always up to date without a manual Sync click.
+  if(name==='schedule'){
+    schedRenderCal();
+    if(CONFIG_STATUS.wiw) syncWIW(true);
+    else schedUpdateWiwBanner();
+  }
 }
 var STAFF_TILE_UNLOCKED = false;
 
@@ -1262,7 +1269,7 @@ function startRealtime(){
   // minutes so the home numbers stay current without a manual sync.
   setInterval(function(){ if(S.rgpUser && S.rgpKey){ loadDashboard(); loadRevenue(true); } }, 120000);
   // When I Work — keep the schedule in sync every 5 minutes.
-  setInterval(function(){ if(S.wiwEmail && S.wiwPass) syncWIW(true); }, 300000);
+  setInterval(function(){ if(CONFIG_STATUS.wiw) syncWIW(true); }, 300000);
 }
 
 // Stamp the home header so live refreshes are visible/verifiable.
@@ -1568,10 +1575,32 @@ function renderDeadOpps(){
 // ═══════════════════════════════════════════════════
 // WIW
 // ═══════════════════════════════════════════════════
+function schedUpdateWiwBanner(state, detail){
+  var b = document.getElementById('wiw-sched-banner');
+  if(!b) return;
+  if(!CONFIG_STATUS.wiw){
+    b.style.display='block';
+    b.style.background='#7c3aed20'; b.style.color='#c4b5fd'; b.style.border='1px solid #7c3aed40';
+    b.innerHTML='⚠ When I Work not connected — <a href="#" onclick="nav(\'settings\');return false;" style="color:#c4b5fd">add credentials in Settings</a> to auto-populate shifts';
+    return;
+  }
+  if(state==='ok'){
+    b.style.display='block';
+    b.style.background='#15803d20'; b.style.color='#86efac'; b.style.border='1px solid #15803d40';
+    b.innerHTML='✓ When I Work synced — '+(detail||'')+'  <span style="opacity:.6;font-size:11px">Blue blocks = WIW shifts</span>';
+  } else if(state==='err'){
+    b.style.display='block';
+    b.style.background='#7f1d1d20'; b.style.color='#fca5a5'; b.style.border='1px solid #7f1d1d40';
+    b.innerHTML='✗ WIW sync failed — '+(detail||'check credentials in Settings');
+  } else {
+    b.style.display='none';
+  }
+}
+
 function syncWIW(silent){
   // Not configured → leave the dot neutral (grey). Never touches the global
   // Sync spinner — WIW is decoupled from the RGP sync.
-  if(!CONFIG_STATUS.wiw){ setDot('wiw','','WIW'); return; }
+  if(!CONFIG_STATUS.wiw){ setDot('wiw','','WIW'); schedUpdateWiwBanner(); return; }
   setDot('wiw','warn','WIW …');
   pfetch(proxyURL('/wiw/shifts')+'?days=35&_='+Date.now(), 20000)
   .then(function(r){return r.json();})
@@ -1585,6 +1614,7 @@ function syncWIW(silent){
     setDot('wiw','live','WIW ✓ '+DATA.wiwShifts.length);
     document.getElementById('wiw-conn-txt').textContent = DATA.wiwShifts.length+' shifts synced';
     document.getElementById('wiw-conn-dot').className = 'conn-dot grn';
+    schedUpdateWiwBanner('ok', DATA.wiwShifts.length+' shifts');
     schedRenderCal();
     if(!silent) showToast('✓ Synced — '+DATA.wiwShifts.length+' WIW shifts','ok');
   })
@@ -1593,6 +1623,7 @@ function syncWIW(silent){
     setDot('wiw','err','WIW ✗');
     document.getElementById('wiw-conn-txt').textContent = 'Sync failed — '+reason;
     document.getElementById('wiw-conn-dot').className = 'conn-dot red';
+    schedUpdateWiwBanner('err', reason);
     if(!silent) showToast('WIW sync failed — '+reason,'er');
   });
 }
