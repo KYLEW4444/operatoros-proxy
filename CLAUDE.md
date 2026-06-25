@@ -59,6 +59,24 @@ mirror step and any edits there would be lost. Edit in the repo, then copy.
 | `LAUNCH_OperatorOS.bat` | One-shot launcher: kills any old proxy (by cmdline + port, waits for the port to free), starts fresh, opens the app. |
 | `AspireSchedule.html` | Standalone schedule view. |
 
+## Deployment (Railway + local)
+- The app **defaults to the Railway proxy** `https://operatoros-proxy-production.up.railway.app`
+  and **automatically falls back to the local proxy** (`http://127.0.0.1:5001`) if
+  Railway is unreachable (`resolveProxy()` health-checks each at startup).
+- **Railway project/service:** `industrious-upliftment` / `operatoros-proxy` / `production`.
+  Deploy with `railway up` (CLI is linked) — `git push` alone does NOT auto-deploy.
+- **Railway credentials = environment variables** (set via `railway variables --set`
+  or the dashboard): `RGP_USER`, `RGP_KEY`, `FACILITY_CODE`, and optionally
+  `CLAUDE_KEY`, `WIW_EMAIL`, `WIW_PASSWORD`, `GYM`, `LOCATION`. `ADMIN_TOKEN`
+  guards the remote `POST /config/set`. The proxy reads env vars first, then the
+  local file — so Railway runs on env vars, local dev on `rgp_proxy_config.json`.
+- The proxy binds `0.0.0.0` when hosted (Railway sets `RAILWAY_ENVIRONMENT`) and
+  `127.0.0.1` locally. It speaks HTTP/1.1 (required by Railway's edge proxy).
+- Deploy files: `Procfile`, `railway.json`, `requirements.txt`.
+- **Testing caveat:** Windows `curl` (schannel) fails Railway's TLS with
+  `CRYPT_E_NO_REVOCATION_CHECK`. Use `curl --ssl-no-revoke` to test from the CLI.
+  Chrome is unaffected, so the app works normally.
+
 ## Security model (important)
 - **Secrets never live in the browser.** RGP creds, the Claude API key, and WIW
   creds are stored only in `rgp_proxy_config.json`. The frontend sends NO secrets
