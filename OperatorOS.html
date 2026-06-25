@@ -874,7 +874,6 @@ var S = {
   rgpUser:'', rgpKey:'',
   fc1:'ASP', fc2:'ASPW', fcActive:'1',
   wiwEmail:'', wiwPass:'',
-  claude:'',
   pinOwner:'1234', pinMgr:'0000',
 };
 var DATA = {
@@ -1005,7 +1004,6 @@ function loadConfigStatus(){
     .then(function(d){
       CONFIG_STATUS = d || {rgp:false,claude:false,wiw:false};
       if(CONFIG_STATUS.rgp){ S.rgpUser='✓'; S.rgpKey='✓'; } else { S.rgpUser=''; S.rgpKey=''; }
-      S.claude  = CONFIG_STATUS.claude ? '✓' : '';
       if(CONFIG_STATUS.wiw){ S.wiwEmail='✓'; S.wiwPass='✓'; } else { S.wiwEmail=''; S.wiwPass=''; }
       updateCredUI();
     })
@@ -1707,7 +1705,7 @@ function renderActions(){
 }
 
 function genAIActions(){
-  if(!S.claude){ showToast('Add Claude API key in Settings','wa'); return; }
+  if(!CONFIG_STATUS.claude){ showToast('Add Claude API key in Settings','wa'); return; }
   var context = buildAIContext();
   showToast('AI refreshing actions...','');
   aiCall('Based on this gym data, generate 6 prioritized action items (3 urgent, 2 watch, 1 win). For each: severity (r/y/g), title, detail, and action button label. Respond in JSON array format only — [{sev,title,detail,action}].\n\nData:\n'+context)
@@ -1878,7 +1876,7 @@ function lcRender(){
 // INTELLIGENCE
 // ═══════════════════════════════════════════════════
 function runIntel(){
-  if(!S.claude){ showToast('Add Claude API key in Settings','wa'); return; }
+  if(!CONFIG_STATUS.claude){ showToast('Add Claude API key in Settings','wa'); return; }
   document.getElementById('intel-cards').innerHTML = '<div class="loading"><div class="loading-spin"></div>Pulling this month vs last month from RGP...</div>';
 
   fetch(proxyURL('/intel/monthly')+rgpParams())
@@ -1980,7 +1978,7 @@ function buildAIContext(trend){
 // SOCIAL AUTO-PILOT
 // ═══════════════════════════════════════════════════
 function genSocialPost(type){
-  if(!S.claude){ showToast('Add Claude API key in Settings','wa'); nav('settings'); return; }
+  if(!CONFIG_STATUS.claude){ showToast('Add Claude API key in Settings','wa'); nav('settings'); return; }
   var prompts = {
     dead_time: 'Write a short, punchy Instagram/Facebook post for '+S.gym+' in '+S.location+' to fill a slow mid-week afternoon slot (Tue/Thu 2–4pm). Drop-in offer, urgency, fun climbing/ninja gym energy. Max 100 words, 3 emojis max, 4 hashtags max.',
     program: 'Write an Instagram post for '+S.gym+' promoting the next kids climbing program intake. Fun, parent-focused, creates urgency. Mention limited spots. Max 90 words.',
@@ -2060,7 +2058,7 @@ function sendChat(){
   inp.value = '';
   addMsg(msg,'u');
   CHAT_HISTORY.push({role:'user',content:msg});
-  if(!S.claude){ addMsg('Add Claude API key in Settings to enable AI chat.','a'); return; }
+  if(!CONFIG_STATUS.claude){ addMsg('Add Claude API key in Settings to enable AI chat.','a'); return; }
   document.getElementById('chat-send').disabled = true;
   var sys = 'You are an operations assistant for '+S.gym+' in '+S.location+'. Live data: '
     +DATA.members.length+' members loaded, '+DATA.atRisk.length+' at risk, '

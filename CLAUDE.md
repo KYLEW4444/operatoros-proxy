@@ -67,7 +67,7 @@ Railway deployed URL: `https://operatoros-proxy-production.up.railway.app`
 - `POST /config/set` → localhost is trusted; remote requires `X-Admin-Token` header matching `ADMIN_TOKEN` env var
 - Rate limit: 240 requests / 60s per IP (in-memory sliding window)
 - RGP and WIW: SSL cert verification disabled (avoids Windows/Railway TLS flakiness; Chrome unaffected)
-- **⚠️ Known gap:** The chat sidebar (`sendChat()` in the HTML) hits `https://api.anthropic.com/v1/messages` directly from the browser using `S.claude`. This is a legacy path — the Claude key should NOT be in `S.claude` in localStorage. The proxy's `/ai/call` endpoint should be used instead. This was partially addressed but the chat function was not updated.
+- All Claude calls (chat, actions, intel, social) go through the proxy's `/ai/call` — the browser never holds or sends the Claude key. `CONFIG_STATUS.claude` is the sole availability gate (a boolean from `/config/status`).
 
 ### Railway Environment Variables Required
 
@@ -179,7 +179,7 @@ ADMIN_TOKEN      Guards POST /config/set on the hosted instance
 - Multi-turn conversation with Claude
 - System prompt includes live data: member counts, at-risk count, program count, WIW shift count, 30d revenue
 - Quick question buttons: "What should I do first today?", "Which members are at risk?", etc.
-- **⚠️ Security gap**: hits Anthropic API directly from browser using key from `S.claude` in localStorage
+- Routes through proxy `/ai/call` — same secure path as all other AI calls
 
 ### Actions List
 - 6 base actions hardcoded (Aspire-specific): League of Nemos oversubscribed, uncovered party slots, H.I.T Bootcamp dead, Kelsos fill rate, camp staffing, Rattlesnakes expansion opportunity
@@ -205,9 +205,6 @@ ADMIN_TOKEN      Guards POST /config/set on the hosted instance
 
 ## What's Broken or Incomplete
 
-### Security Issues
-- **Chat sidebar calls Anthropic API directly from the browser** (`sendChat()` line ~1823). The Claude key lives in `S.claude` which is populated from `v('s-claude')` on settings save — this puts the key in memory and the Settings input, even if not in localStorage. Fix: route `sendChat()` through `proxyURL('/ai/call')` the same way all other AI calls do.
-
 ### Data Issues
 - **Dead time opportunities are static**, not derived from the actual heatmap. `renderDeadOpps()` hardcodes three Aspire-specific items regardless of real check-in data.
 - **Staff data is hardcoded in JS** (the `STAFF` array). Adding/removing staff requires a code change. No UI to manage it.
@@ -228,32 +225,29 @@ ADMIN_TOKEN      Guards POST /config/set on the hosted instance
 
 ## What Needs to Be Built Next
 
-**Priority 1 — Security fix**
-- Route `sendChat()` through the proxy's `/ai/call` endpoint. Remove `S.claude` from all paths that expose it to the browser. The proxy config already holds the key.
-
-**Priority 2 — Dynamic dead time opportunities**
+**Priority 1 — Dynamic dead time opportunities**
 - After heatmap loads from RGP, calculate actual dead windows (slots where average visits ≤ threshold) and render real opportunities, not the hardcoded Aspire list. This is the core "dead time" value prop.
 
-**Priority 3 — Staff management UI**
+**Priority 2 — Staff management UI**
 - Add/edit/delete staff from the Settings or Staff page instead of editing the JS array.
 - Expose wage editing in the owner-PIN-locked view.
 
-**Priority 4 — Schedule persistence**
+**Priority 3 — Schedule persistence**
 - Persist schedule data to the proxy server (new endpoints: `POST /schedule/save`, `GET /schedule/load`) instead of localStorage only.
 
-**Priority 5 — Multi-location**
+**Priority 4 — Multi-location**
 - Unlock the Multi-Location tile.
 - Facility selector on the home screen or a split-view comparing Milton (ASP) vs Whitby (ASPW) for members, revenue, programs.
 
-**Priority 6 — Social publishing**
+**Priority 5 — Social publishing**
 - Connect to Meta Graph API or Buffer for real post scheduling.
 - The draft queue → approve → schedule flow is already built; it just needs the publish call.
 
-**Priority 7 — WIW ↔ internal schedule sync**
+**Priority 6 — WIW ↔ internal schedule sync**
 - Option A: Import WIW shifts into the internal schedule calendar on sync.
 - Option B: Drop the internal scheduler and use WIW as the source of truth (pull WIW into the display only).
 
-**Priority 8 — Member detail + win-back**
+**Priority 7 — Member detail + win-back**
 - Clicking a member should open a profile: visit history, membership details, risk score, one-click "generate win-back email" via AI.
 
 **Future (SaaS v2 build)**
