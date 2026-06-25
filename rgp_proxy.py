@@ -801,6 +801,31 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        # REVENUE YTD — all non-voided invoices from Jan 1 to today
+        if path == '/intel/ytd':
+            today     = datetime.date.today()
+            year_start = today.replace(month=1, day=1)
+            raw = fetch_all(f'/v1/invoices/facility/{fc}', u, k,
+                            f'{year_start.isoformat()} 00:00:00',
+                            f'{today.isoformat()} 23:59:59', 'invoices')
+            valid = [i for i in raw if not i.get('voidedInvoice', 0)]
+            total_ytd = round(sum(float(i.get('amount', 0) or 0) for i in valid), 2)
+            today_str = today.isoformat()
+            by_month = {}
+            for i in valid:
+                dt = str(i.get('invoicePostDate', ''))[:7]  # YYYY-MM
+                if dt:
+                    by_month[dt] = round(by_month.get(dt, 0) + float(i.get('amount', 0) or 0), 2)
+            send_json(self, 200, {
+                'year':        today.year,
+                'ytd_revenue': total_ytd,
+                'ytd_invoices': len(valid),
+                'by_month':    by_month,
+                'date_start':  year_start.isoformat(),
+                'date_end':    today_str,
+            })
+            return
+
         # CHECKINS ACTIVE — /v1/checkins/active/facility/{fc} (takes NO query params)
         if path == '/checkins/active':
             s, d, _raw = rgp_request(f'/v1/checkins/active/facility/{fc}', u, k, None)
@@ -821,7 +846,9 @@ class Handler(BaseHTTPRequestHandler):
                 })
             return
 
-        # CHECKINS TODAY — /v1/checkins/facility/{fc} for the current day
+        # CHECKINS TODAY — /v1/checkins/facility/{fc} for the current day.
+        # Falls back to counting today's in-person invoices when the check-ins
+        # scope is not enabled (RGP returns 400).
         if path == '/checkins/today':
             today_str = datetime.date.today().isoformat()
             s, d, recs = fetch_checkins(fc, u, k, today_str, today_str)
@@ -830,12 +857,23 @@ class Handler(BaseHTTPRequestHandler):
                     'count': len(recs), 'date': today_str,
                     'checkins': recs[:500],
                     'sample_record': recs[0] if recs else None,
+                    'source': 'checkins',
                 })
             else:
-                send_json(self, s, {
-                    'count': 0, 'rgp_status': s,
-                    'rgp_message': d.get('message') if isinstance(d, dict) else None,
-                    'error': d, 'path_tried': f'/v1/checkins/facility/{fc}',
+                # Fallback: count today's in-person (non-online, non-voided) invoices
+                # as a floor visit estimate when check-in permissions are absent.
+                inv_all = fetch_all(f'/v1/invoices/facility/{fc}', u, k,
+                                    f'{today_str} 00:00:00', f'{today_str} 23:59:59', 'invoices')
+                inv_today = [i for i in inv_all
+                             if not i.get('voidedInvoice', 0)
+                             and str(i.get('invtype', '')).upper() != 'ONLINE']
+                send_json(self, 200, {
+                    'count': len(inv_today), 'date': today_str,
+                    'checkins': [],
+                    'source': 'invoices',
+                    'note': 'Estimated from in-person invoices (check-ins scope not enabled in RGP)',
+                    'checkins_unavailable': True,
+                    'rgp_status': s,
                     'hint': CHECKINS_HINT,
                 })
             return

@@ -697,7 +697,7 @@ tr:hover td{background:var(--surf2)}
         <div class="kpi"><div class="kpi-label">At Risk</div><div class="kpi-val y" id="m-risk">—</div><div class="kpi-sub">no visit 30d+</div></div>
         <div class="kpi"><div class="kpi-label">Lapsed</div><div class="kpi-val r" id="m-lapsed">—</div><div class="kpi-sub">terminated / expired</div></div>
         <div class="kpi"><div class="kpi-label">On Floor Now</div><div class="kpi-val b" id="m-now">—</div><div class="kpi-sub">active check-ins</div></div>
-        <div class="kpi"><div class="kpi-label">Today</div><div class="kpi-val b" id="m-today">—</div><div class="kpi-sub">check-ins today</div></div>
+        <div class="kpi"><div class="kpi-label">Today</div><div class="kpi-val b" id="m-today">—</div><div class="kpi-sub" id="m-today-sub">check-ins today</div></div>
       </div>
       <div class="sec">
         <div class="sec-head">Member Roster <span id="member-count" style="font-size:11px;color:var(--muted);font-weight:400"></span></div>
@@ -1244,13 +1244,21 @@ function loadCheckins(silent){
     pfetch(proxyURL('/checkins/active') + rgpParams()).then(function(r){return r.json();}).catch(function(){return {};}),
     pfetch(proxyURL('/checkins/today')  + rgpParams()).then(function(r){return r.json();}).catch(function(){return {};})
   ]).then(function(res){
-    var active = res[0] || {}, today = res[1] || {};
-    var now = (active.active_now != null) ? active.active_now : (active.count != null ? active.count : 0);
-    var cnt = (today.count != null) ? today.count : 0;
-    DATA.dashboard.active_now    = now;
+    var active = res[0] || {}, todayData = res[1] || {};
+    // active_now — real-time count; no useful fallback when 400 so show 0
+    var now = (active.active_now != null && !active.rgp_status) ? active.active_now : 0;
+    // today count — proxy falls back to invoice count when check-ins API is 400
+    var cnt = (todayData.count != null) ? todayData.count : 0;
+    var isEstimate = !!todayData.checkins_unavailable;
+    DATA.dashboard.active_now     = now;
     DATA.dashboard.checkins_today = cnt;
-    var elNow   = document.getElementById('m-now');   if(elNow)   elNow.textContent   = now;
-    var elToday = document.getElementById('m-today'); if(elToday) elToday.textContent = cnt;
+    var elNow   = document.getElementById('m-now');
+    var elToday = document.getElementById('m-today');
+    if(elNow)   elNow.textContent   = now;
+    // Show "~34 est." when using invoice fallback so the user knows it's approximate
+    if(elToday) elToday.textContent = isEstimate ? '~'+cnt+' est.' : cnt;
+    var subToday = document.getElementById('m-today-sub');
+    if(subToday) subToday.textContent = isEstimate ? 'in-person invoices (check-ins API off)' : 'check-ins today';
     markUpdated();
   }).catch(function(){ /* keep last known values on transient errors */ });
 }
@@ -1494,11 +1502,18 @@ function loadRevenue(silent){
       DATA.dashboard.revenue_30d = total;
       var zr = document.getElementById('z-rev'); if(zr) zr.textContent = total > 0 ? '$'+Math.round(total/1000)+'K' : '—';
       setTodayInvoices(d);
+      // Build 30-day KPIs — use valid_count (non-voided) not total
+      var todayRev = d.today_revenue || 0;
+      var todayCnt = d.today_count != null ? d.today_count : 0;
       document.getElementById('rev-kpis').innerHTML = [
-        {l:'Total Revenue',v:'$'+Math.round(total).toLocaleString(),c:'b'},
-        {l:'Invoices',v:d.total||0,c:'g'},
-      ].map(function(k){return '<div class="kpi"><div class="kpi-label">'+k.l+'</div><div class="kpi-val '+k.c+'">'+k.v+'</div></div>';}).join('');
-      document.getElementById('rev-source').textContent = '— last 30 days';
+        {l:'Revenue (30d)',v:'$'+Math.round(total).toLocaleString(),c:'b'},
+        {l:'Today's Revenue',v:'$'+Math.round(todayRev).toLocaleString(),c:'g'},
+        {l:'Today's Invoices',v:todayCnt,c:'g'},
+        {l:'Valid Invoices (30d)',v:d.valid_count||0,c:''},
+      ].map(function(k){return '<div class="kpi"><div class="kpi-label">'+k.l+'</div><div class="kpi-val '+(k.c||'')+'">'+k.v+'</div></div>';}).join('');
+      // Kick off YTD load in parallel — fills in when ready
+      loadRevenueYTD(true);
+      document.getElementById('rev-source').textContent = '— last 30 days live from RGP';
       document.getElementById('rev-tbody').innerHTML = DATA.invoices.slice(0,100).map(function(inv){
         var dt = inv.date ? inv.date.split(' ')[0] : '—';
         var voided = inv.voided ? '<span style="color:var(--red);font-size:10px"> VOID</span>' : '';
@@ -1512,6 +1527,25 @@ function loadRevenue(silent){
       if(!silent) showToast('✓ Revenue data loaded','ok');
     })
     .catch(function(e){ if(!silent) showToast('Revenue load failed','er'); });
+}
+
+function loadRevenueYTD(silent){
+  if(!S.rgpUser) return;
+  return pfetch(proxyURL('/intel/ytd') + rgpParams())
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(d.error) return;
+      DATA.dashboard.revenue_ytd = d.ytd_revenue || 0;
+      // Inject a YTD card into rev-kpis (append, don't replace)
+      var existing = document.getElementById('rev-ytd-kpi');
+      var card = '<div class="kpi" id="rev-ytd-kpi">'
+        +'<div class="kpi-label">Revenue YTD ('+d.year+')</div>'
+        +'<div class="kpi-val b">$'+Math.round(d.ytd_revenue||0).toLocaleString()+'</div>'
+        +'<div class="kpi-sub">'+d.ytd_invoices+' invoices · Jan 1 – today</div></div>';
+      if(existing){ existing.outerHTML = card; }
+      else{ document.getElementById('rev-kpis').insertAdjacentHTML('beforeend', card); }
+    })
+    .catch(function(){});
 }
 
 // ═══════════════════════════════════════════════════
