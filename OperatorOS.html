@@ -774,17 +774,14 @@ tr:hover td{background:var(--surf2)}
       <div class="pg-head">
         <div><div class="pg-title">👤 Members</div><div class="pg-sub">Live from RGP — roster, health, churn risk</div></div>
         <div class="pg-actions">
-          <button class="btn btn-sec btn-sm" onclick="filterMembers('all',this)" id="mf-all" style="border-color:var(--acc);color:var(--acc)">All</button>
-          <button class="btn btn-sec btn-sm" onclick="filterMembers('atrisk',this)" id="mf-risk">At Risk</button>
-          <button class="btn btn-sec btn-sm" onclick="filterMembers('lapsed',this)" id="mf-lapsed">Lapsed</button>
           <button class="btn btn-pri btn-sm" onclick="loadMembers()">⟳ Refresh</button>
         </div>
       </div>
-      <div class="kpis">
-        <div class="kpi"><div class="kpi-label">Active</div><div class="kpi-val g" id="m-active">—</div><div class="kpi-sub">status OK</div></div>
-        <div class="kpi"><div class="kpi-label">At Risk</div><div class="kpi-val y" id="m-risk">—</div><div class="kpi-sub">no visit 30d+</div></div>
-        <div class="kpi"><div class="kpi-label">Lapsed</div><div class="kpi-val r" id="m-lapsed">—</div><div class="kpi-sub">terminated / expired</div></div>
-        <div class="kpi"><div class="kpi-label">On Floor Now</div><div class="kpi-val b" id="m-now">—</div><div class="kpi-sub">active check-ins</div></div>
+      <div class="kpis" style="cursor:pointer">
+        <div class="kpi" onclick="filterMembers('active',this)" title="Show active members" style="border-bottom:2px solid transparent;transition:border-color .15s" onmouseover="this.style.borderColor='var(--grn)'" onmouseout="if(!this.classList.contains('mf-on')) this.style.borderColor='transparent'"><div class="kpi-label">Active</div><div class="kpi-val g" id="m-active">—</div><div class="kpi-sub">tap to view</div></div>
+        <div class="kpi" onclick="filterMembers('atrisk',this)" title="Show at-risk members" style="border-bottom:2px solid transparent;transition:border-color .15s" onmouseover="this.style.borderColor='var(--yel)'" onmouseout="if(!this.classList.contains('mf-on')) this.style.borderColor='transparent'"><div class="kpi-label">At Risk</div><div class="kpi-val y" id="m-risk">—</div><div class="kpi-sub">tap to view</div></div>
+        <div class="kpi" onclick="filterMembers('lapsed',this)" title="Show lapsed members" style="border-bottom:2px solid transparent;transition:border-color .15s" onmouseover="this.style.borderColor='var(--red)'" onmouseout="if(!this.classList.contains('mf-on')) this.style.borderColor='transparent'"><div class="kpi-label">Lapsed</div><div class="kpi-val r" id="m-lapsed">—</div><div class="kpi-sub">tap to view</div></div>
+        <div class="kpi" onclick="filterMembers('now',this)" title="Show members on floor now" style="border-bottom:2px solid transparent;transition:border-color .15s" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="if(!this.classList.contains('mf-on')) this.style.borderColor='transparent'"><div class="kpi-label">On Floor Now</div><div class="kpi-val b" id="m-now">—</div><div class="kpi-sub">tap to view</div></div>
         <div class="kpi"><div class="kpi-label">Today</div><div class="kpi-val b" id="m-today">—</div><div class="kpi-sub" id="m-today-sub">check-ins today</div></div>
       </div>
       <div class="sec">
@@ -1557,25 +1554,49 @@ function loadMembers(silent){
       document.getElementById('z-risk').textContent    = atRisk.length;
       document.getElementById('z-active').textContent  = active.length;
       document.getElementById('member-count').textContent = '— '+DATA.members.length+' loaded (scroll shows top 2000 by recent visit)';
-      renderMemberTable(DATA.members);
+      // Don't auto-show all members — user taps a KPI card to filter
+      renderMemberTable([]);
       if(!silent) showToast('✓ '+DATA.members.length+' members loaded — '+active.length+' active','ok');
     })
     .catch(function(e){ if(!silent) showToast('Member load failed: '+e.message,'er'); });
 }
 
 function filterMembers(type, el){
-  ['all','risk','lapsed'].forEach(function(k){ var b=document.getElementById('mf-'+k); if(b){b.style.borderColor='';b.style.color='';} });
-  if(el){ el.style.borderColor='var(--acc)'; el.style.color='var(--acc)'; }
-  var cutoff = new Date(); cutoff.setDate(cutoff.getDate()-30);
-  var list = type==='all' ? DATA.members
-    : type==='atrisk' ? DATA.atRisk
-    : DATA.members.filter(function(m){return m.status==='TERMINATED'||m.status==='EXPIRED'||m.status==='LAPSED';});
+  // Deselect all KPI cards
+  document.querySelectorAll('#pg-members .kpi').forEach(function(k){
+    k.classList.remove('mf-on'); k.style.borderColor='transparent';
+  });
+  // Highlight selected card
+  if(el && el.closest){
+    var card = el.closest('.kpi') || el;
+    card.classList.add('mf-on');
+    var clr = type==='active'?'var(--grn)':type==='atrisk'?'var(--yel)':type==='lapsed'?'var(--red)':'var(--acc)';
+    card.style.borderColor = clr;
+  }
+  if(!DATA.members.length){
+    document.getElementById('member-tbody').innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">Sync RGP to load member data</td></tr>';
+    return;
+  }
+  var list;
+  if(type==='active'){
+    list = DATA.members.filter(function(m){return m.status==='OK'||m.status==='FROZEN';});
+  } else if(type==='atrisk'){
+    list = DATA.atRisk || [];
+  } else if(type==='lapsed'){
+    list = DATA.members.filter(function(m){return m.status==='TERMINATED'||m.status==='EXPIRED'||m.status==='LAPSED';});
+  } else if(type==='now'){
+    list = DATA.membersOnFloor || [];
+  } else {
+    list = DATA.members;
+  }
+  var label = type==='active'?'Active members':type==='atrisk'?'At-risk members':type==='lapsed'?'Lapsed / expired':type==='now'?'On floor now':'All members';
+  document.getElementById('member-count').textContent = '— '+list.length+' '+label;
   renderMemberTable(list);
 }
 
 function renderMemberTable(members){
   if(!members.length){
-    document.getElementById('member-tbody').innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">Sync RGP to load member data</td></tr>';
+    document.getElementById('member-tbody').innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:32px"><div style="font-size:22px;margin-bottom:8px">👆</div>Tap a category card above to view that member list</td></tr>';
     return;
   }
   var cutoff = new Date(); cutoff.setDate(cutoff.getDate()-30);
@@ -1705,58 +1726,48 @@ function renderSchedule(){ schedRenderCal(); }
 
 function loadRevenue(silent){
   if(!S.rgpUser){ if(!silent) showToast('Connect RGP in Settings first','wa'); return Promise.resolve(); }
-  return pfetch(proxyURL('/invoices') + rgpParams())
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      DATA.invoices = d.invoices || [];
-      var total = d.total_revenue || 0;
-      DATA.dashboard.revenue_30d = total;
-      var zr = document.getElementById('z-rev'); if(zr) zr.textContent = total > 0 ? '$'+Math.round(total/1000)+'K' : '—';
-      setTodayInvoices(d);
-      // Build 30-day KPIs — use valid_count (non-voided) not total
-      var todayRev = d.today_revenue || 0;
-      var todayCnt = d.today_count != null ? d.today_count : 0;
-      document.getElementById('rev-kpis').innerHTML = [
-        {l:'Revenue (30d)',v:'$'+Math.round(total).toLocaleString(),c:'b'},
-        {l:'Today Revenue',v:'$'+Math.round(todayRev).toLocaleString(),c:'g'},
-        {l:'Today Invoices',v:todayCnt,c:'g'},
-        {l:'Valid Invoices (30d)',v:d.valid_count||0,c:''},
-      ].map(function(k){return '<div class="kpi"><div class="kpi-label">'+k.l+'</div><div class="kpi-val '+(k.c||'')+'">'+k.v+'</div></div>';}).join('');
-      // Kick off YTD load in parallel — fills in when ready
-      loadRevenueYTD(true);
-      document.getElementById('rev-source').textContent = '— last 30 days live from RGP';
-      document.getElementById('rev-tbody').innerHTML = DATA.invoices.slice(0,100).map(function(inv){
-        var dt = inv.date ? inv.date.split(' ')[0] : '—';
-        var voided = inv.voided ? '<span style="color:var(--red);font-size:10px"> VOID</span>' : '';
-        return '<tr>'
-          +'<td style="color:var(--muted);font-size:12px">'+dt+'</td>'
-          +'<td><span class="pill pill-b">'+(inv.type||'—')+'</span>'+voided+'</td>'
-          +'<td style="color:'+(inv.voided?'var(--red)':'var(--grn)')+';font-weight:700">$'+parseFloat(inv.amount||0).toFixed(2)+'</td>'
-          +'<td style="color:var(--muted)">$'+parseFloat(inv.tax||0).toFixed(2)+'</td>'
-          +'<td style="color:var(--muted);font-size:12px">'+(inv.source||'—')+'</td></tr>';
-      }).join('');
-      if(!silent) showToast('✓ Revenue data loaded','ok');
-    })
-    .catch(function(e){ if(!silent) showToast('Revenue load failed','er'); });
+  var now = new Date();
+  var curMonth = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  return Promise.all([
+    pfetch(proxyURL('/invoices') + rgpParams()).then(function(r){return r.json();}),
+    pfetch(proxyURL('/intel/ytd') + rgpParams()).then(function(r){return r.json();}).catch(function(){return {};})
+  ]).then(function(results){
+    var d   = results[0];
+    var ytd = results[1];
+    DATA.invoices = d.invoices || [];
+    DATA.dashboard.revenue_30d = d.total_revenue || 0;
+    setTodayInvoices(d);
+    // Revenue this month from YTD breakdown
+    var monthRev = ytd.by_month ? (ytd.by_month[curMonth] || 0) : 0;
+    var ytdRev   = ytd.ytd_revenue || 0;
+    DATA.dashboard.revenue_ytd = ytdRev;
+    var todayRev = d.today_revenue || 0;
+    var todayCnt = d.today_count  != null ? d.today_count : 0;
+    var zr = document.getElementById('z-rev'); if(zr) zr.textContent = ytdRev > 0 ? '$'+Math.round(ytdRev/1000)+'K' : '—';
+    document.getElementById('rev-kpis').innerHTML = [
+      {l:'Revenue This Month', v:'$'+Math.round(monthRev).toLocaleString(), c:'b', sub:now.toLocaleString('en',{month:'long'})+' '+now.getFullYear()},
+      {l:'Today Revenue',      v:'$'+Math.round(todayRev).toLocaleString(), c:'g', sub:''},
+      {l:'Today Invoices',     v:todayCnt,                                  c:'g', sub:''},
+      {l:'Revenue YTD',        v:'$'+Math.round(ytdRev).toLocaleString(),   c:'b', sub:(ytd.ytd_invoices||0)+' invoices · Jan 1 – today'},
+    ].map(function(k){return '<div class="kpi"><div class="kpi-label">'+k.l+'</div><div class="kpi-val '+(k.c||'')+'">'+k.v+'</div>'+(k.sub?'<div class="kpi-sub">'+k.sub+'</div>':'')+'</div>';}).join('');
+    document.getElementById('rev-source').textContent = '— last 30 days live from RGP';
+    document.getElementById('rev-tbody').innerHTML = DATA.invoices.slice(0,100).map(function(inv){
+      var dt = inv.date ? inv.date.split(' ')[0] : '—';
+      var voided = inv.voided ? '<span style="color:var(--red);font-size:10px"> VOID</span>' : '';
+      return '<tr>'
+        +'<td style="color:var(--muted);font-size:12px">'+dt+'</td>'
+        +'<td><span class="pill pill-b">'+(inv.type||'—')+'</span>'+voided+'</td>'
+        +'<td style="color:'+(inv.voided?'var(--red)':'var(--grn)')+';font-weight:700">$'+parseFloat(inv.amount||0).toFixed(2)+'</td>'
+        +'<td style="color:var(--muted)">$'+parseFloat(inv.tax||0).toFixed(2)+'</td>'
+        +'<td style="color:var(--muted);font-size:12px">'+(inv.source||'—')+'</td></tr>';
+    }).join('');
+    if(!silent) showToast('✓ Revenue data loaded','ok');
+  }).catch(function(e){ if(!silent) showToast('Revenue load failed','er'); });
 }
 
 function loadRevenueYTD(silent){
-  if(!S.rgpUser) return;
-  return pfetch(proxyURL('/intel/ytd') + rgpParams())
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(d.error) return;
-      DATA.dashboard.revenue_ytd = d.ytd_revenue || 0;
-      // Inject a YTD card into rev-kpis (append, don't replace)
-      var existing = document.getElementById('rev-ytd-kpi');
-      var card = '<div class="kpi" id="rev-ytd-kpi">'
-        +'<div class="kpi-label">Revenue YTD ('+d.year+')</div>'
-        +'<div class="kpi-val b">$'+Math.round(d.ytd_revenue||0).toLocaleString()+'</div>'
-        +'<div class="kpi-sub">'+d.ytd_invoices+' invoices · Jan 1 – today</div></div>';
-      if(existing){ existing.outerHTML = card; }
-      else{ document.getElementById('rev-kpis').insertAdjacentHTML('beforeend', card); }
-    })
-    .catch(function(){});
+  // Now rolled into loadRevenue() — kept as stub so any lingering calls are no-ops
+  return Promise.resolve();
 }
 
 // ═══════════════════════════════════════════════════
