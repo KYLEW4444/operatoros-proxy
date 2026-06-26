@@ -679,23 +679,27 @@ class Handler(BaseHTTPRequestHandler):
             send_json(self, 200, {'members': members, 'total': len(members)})
             return
 
-        # BOOKINGS/SUMMARY — paginate ALL bookings for the current year, filtering
-        # client-side by bookingDate since RGP ignores startDate/endDate for this
-        # endpoint.  RGP max page size = 100; we stop when a short page is
-        # returned or we've passed the year boundary.
+        # BOOKINGS/SUMMARY — RGP returns bookings oldest-first and ignores both
+        # startDate/endDate and orderDir parameters.  Strategy: fetch page 1 to
+        # get the total page count, then fetch the LAST 40 pages (most recent
+        # ~4 000 bookings) and filter client-side to the current year.
         if path == '/bookings/summary':
             today      = datetime.date.today()
             year_start = today.replace(month=1, day=1).isoformat()
             all_raw    = []
             last_error = None
-            for page in range(1, 201):   # safety cap: 200 pages = 20 000 bookings
+            # Step 1: get total pages from page 1
+            s0, d0 = rgp_get(f'/v1/bookings/facility/{fc}', u, k, {'pageSize': 100, 'page': 1})
+            if s0 != 200:
+                send_json(self, s0, {'error': d0, 'path_tried': f'/v1/bookings/facility/{fc}'})
+                return
+            paging0    = d0.get('rgpApiPaging') or {}
+            page_total = int(paging0.get('pageTotal', 1))
+            # Step 2: fetch from 40 pages before the end to capture recent bookings
+            start_page = max(1, page_total - 39)
+            for page in range(start_page, page_total + 1):
                 s, d = rgp_get(f'/v1/bookings/facility/{fc}', u, k, {
-                    'startDate': year_start,
-                    'endDate':   today.isoformat(),
-                    'orderBy':   'bookingDate',
-                    'orderDir':  'desc',
-                    'pageSize':  100,
-                    'page':      page,
+                    'pageSize': 100, 'page': page,
                 })
                 if s != 200:
                     last_error = d
@@ -703,21 +707,10 @@ class Handler(BaseHTTPRequestHandler):
                 recs = d.get('bookings', d.get('booking', d.get('data', [])))
                 if isinstance(recs, dict): recs = list(recs.values())
                 if not recs: break
-                # Filter client-side by bookingDate to stay within the year
+                # Keep only bookings from the current year
                 year_recs = [b for b in recs
                              if str(b.get('bookingDate') or '')[:10] >= year_start]
                 all_raw.extend(year_recs)
-                # If the oldest record on this page is before this year, we're done
-                oldest = min((str(b.get('bookingDate') or '')[:10] for b in recs), default='')
-                if oldest and oldest < year_start:
-                    break
-                paging = d.get('rgpApiPaging') or {}
-                try:
-                    if page >= int(paging.get('pageTotal', page)):
-                        break
-                except: pass
-                if len(recs) < 100:
-                    break
 
             if not all_raw and last_error:
                 send_json(self, 500, {'error': last_error, 'path_tried': f'/v1/bookings/facility/{fc}'})
