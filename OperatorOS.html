@@ -623,7 +623,7 @@ tr:hover td{background:var(--surf2)}
       <div class="sec">
         <div class="sec-head">Program Performance <span style="font-size:11px;color:var(--muted);font-weight:400" id="prog-source"></span></div>
         <div style="overflow-x:auto">
-          <table><thead><tr><th>Program</th><th>Sessions (YTD)</th><th>Booked</th><th>Avg Price</th><th>Total Revenue</th><th>Cancelled</th><th>Status</th></tr></thead>
+          <table><thead><tr><th>Program</th><th>Age</th><th>Sessions</th><th>Booked / Max</th><th>Fill %</th><th>Avg Price</th><th>Expected</th><th>Revenue YTD</th><th>Staff Req</th><th>Alerts</th></tr></thead>
           <tbody id="prog-tbody"></tbody></table>
         </div>
       </div>
@@ -887,6 +887,63 @@ var CURRENT_USER = null;
 // Which credentials are configured server-side (the browser never holds the
 // real secrets). Populated from GET /config/status.
 var CONFIG_STATUS = {rgp:false, claude:false, wiw:false};
+// ═══════════════════════════════════════════════════════════════════════
+// OFFERINGS DATA — sourced from Aspire Offerings_ Ratios.xlsx
+// Keys are canonical names; matchOffering() fuzzy-matches RGP program names.
+// Fields: min, max, age, duration, tiers (array), coach (bool),
+//         ratio (staff:student), cost (per block), cost_ps (per session)
+// ═══════════════════════════════════════════════════════════════════════
+var OFFERINGS_DATA = {
+  "Buffalos":                  {min:4,  max:12, age:"6-8",  dur:"60 min",    tiers:[2],    coach:true,  ratio:"1:8",  cost:399.99, cost_ps:40.00},
+  "Rattlesnakes":              {min:4,  max:12, age:"9-10", dur:"60 min",    tiers:[2],    coach:true,  ratio:"1:8",  cost:399.99, cost_ps:40.00},
+  "Kelsos":                    {min:4,  max:12, age:"11+",  dur:"60 min",    tiers:[2],    coach:true,  ratio:"1:8",  cost:399.99, cost_ps:40.00},
+  "Nemos":                     {min:3,  max:6,  age:"4-5",  dur:"60 min",    tiers:[2,3],  coach:false, ratio:"1:8",  cost:399.99, cost_ps:40.00},
+  "LON 1.0":                   {min:6,  max:12, age:"6-8",  dur:"60 min",    tiers:[2,3],  coach:false, ratio:"1:8",  cost:399.99, cost_ps:40.00},
+  "LON 2.0":                   {min:6,  max:12, age:"9-10", dur:"60 min",    tiers:[3],    coach:true,  ratio:"1:8",  cost:399.99, cost_ps:40.00},
+  "LON 3.0":                   {min:6,  max:12, age:"11+",  dur:"60 min",    tiers:[3],    coach:true,  ratio:"1:8",  cost:399.99, cost_ps:40.00},
+  "Finding Nenos":             {min:2,  max:4,  age:"2-4",  dur:"45 min",    tiers:[2,3],  coach:false, ratio:"1:8",  cost:199.99, cost_ps:40.00},
+  "Vanguards 1":               {min:6,  max:10, age:"9+",   dur:"2 hr",      tiers:[3],    coach:true,  ratio:"1:6",  cost:469.00, cost_ps:46.90},
+  "Vanguards 2":               {min:6,  max:10, age:"9+",   dur:"2 hr",      tiers:[3],    coach:true,  ratio:"1:6",  cost:469.00, cost_ps:46.90},
+  "Team Aspire":               {min:6,  max:10, age:"9+",   dur:"2 hr",      tiers:[3],    coach:true,  ratio:"1:6",  cost:5018.00,cost_ps:64.33},
+  "Evos 1.0":                  {min:6,  max:10, age:"9+",   dur:"1.5 hr",    tiers:[3],    coach:true,  ratio:"1:10", cost:3720.00,cost_ps:47.69},
+  "Evos 2.0":                  {min:6,  max:10, age:"9+",   dur:"1.5 hr",    tiers:[3],    coach:true,  ratio:"1:10", cost:3720.00,cost_ps:47.69},
+  "Evos 3.0":                  {min:6,  max:10, age:"9+",   dur:"2 hr",      tiers:[3],    coach:true,  ratio:"1:10", cost:3720.00,cost_ps:47.69},
+  "Evos 4.0":                  {min:6,  max:10, age:"9+",   dur:"2 hr",      tiers:[3],    coach:true,  ratio:"1:10", cost:4176.00,cost_ps:53.54},
+  "Crave Climbing":            {min:4,  max:10, age:"20+",  dur:"1.5 hr",    tiers:[],     coach:true,  ratio:"1:10", cost:199.99, cost_ps:40.00},
+  "LON 18+ Ninja":             {min:4,  max:12, age:"20+",  dur:"1.5 hr",    tiers:[],     coach:true,  ratio:"1:12", cost:199.99, cost_ps:40.00},
+  "March Break Camp":          {min:8,  max:24, age:"",     dur:"7.5 hr",    tiers:[2,3],  coach:false, ratio:"1:8",  cost:380.00, cost_ps:76.00},
+  "Summer Camp":               {min:8,  max:24, age:"",     dur:"7.5 hr",    tiers:[2,3],  coach:false, ratio:"1:8",  cost:380.00, cost_ps:76.00},
+  "Custom School Group":       {min:8,  max:24, age:"",     dur:"2-3 hr",    tiers:[1,2],  coach:false, ratio:"1:12", cost:null,   cost_ps:null},
+  "Climbing and Ninja Party":  {min:10, max:24, age:"",     dur:"2 hr",      tiers:[1,2],  coach:false, ratio:"1:8",  cost:397.00, cost_ps:null},
+  "Youth Group Booking":       {min:10, max:40, age:"",     dur:"2 hr",      tiers:[1,2],  coach:false, ratio:"1:11", cost:308.00, cost_ps:null},
+  "Private Lesson":            {min:1,  max:1,  age:"",     dur:"1 hr",      tiers:[1,2],  coach:false, ratio:"1:1",  cost:60.00,  cost_ps:null},
+  "Semi-Private Lesson":       {min:2,  max:4,  age:"",     dur:"1 hr",      tiers:[1,2],  coach:false, ratio:"1:4",  cost:40.00,  cost_ps:null},
+  "HIT Adult":                 {min:2,  max:8,  age:"20+",  dur:"45 min",    tiers:[1,2],  coach:false, ratio:"1:8",  cost:15.00,  cost_ps:null},
+  "HIT Youth":                 {min:2,  max:8,  age:"",     dur:"45 min",    tiers:[1,2],  coach:false, ratio:"1:8",  cost:15.00,  cost_ps:null},
+  "Friendly Fitness":          {min:2,  max:8,  age:"",     dur:"45 min",    tiers:[1,2],  coach:false, ratio:"1:8",  cost:15.00,  cost_ps:null},
+  "Intro to Bouldering":       {min:1,  max:4,  age:"",     dur:"45 min",    tiers:[1],    coach:false, ratio:"1:4",  cost:40.00,  cost_ps:null},
+  "Base Parties":              {min:10, max:24, age:"",     dur:"2 hr",      tiers:[1,2],  coach:false, ratio:"1:8",  cost:null,   cost_ps:null},
+  "Belay Lesson":              {min:1,  max:6,  age:"",     dur:"1 hr",      tiers:[2,3],  coach:false, ratio:"1:6",  cost:null,   cost_ps:null}
+};
+
+// Fuzzy-match an RGP program name to an OFFERINGS_DATA key.
+// Returns the matched entry or null.
+function matchOffering(rgpName){
+  if(!rgpName) return null;
+  var n = rgpName.toLowerCase().replace(/[^a-z0-9]/g,' ').replace(/\s+/g,' ').trim();
+  // Direct key check (normalized)
+  var keys = Object.keys(OFFERINGS_DATA);
+  for(var i=0;i<keys.length;i++){
+    var k = keys[i].toLowerCase().replace(/[^a-z0-9]/g,' ').replace(/\s+/g,' ').trim();
+    if(n===k) return OFFERINGS_DATA[keys[i]];
+    // Substring match either way
+    if(n.indexOf(k)!==-1 || k.indexOf(n)!==-1) return OFFERINGS_DATA[keys[i]];
+    // Key words: check if all words in the key appear in the RGP name
+    var kwords = k.split(' ').filter(function(w){return w.length>2;});
+    if(kwords.length>0 && kwords.every(function(w){return n.indexOf(w)!==-1;})) return OFFERINGS_DATA[keys[i]];
+  }
+  return null;
+}
 
 function fc(){ return S['fc'+(S.fcActive||'1')] || S.fc1 || 'ASP'; }
 function proxyURL(path){ return (ACTIVE_PROXY || S.proxy || RAILWAY_PROXY).replace(/\/$/,'') + path; }
@@ -1469,37 +1526,87 @@ function loadBookings(silent){
 function renderPrograms(){
   var progs = DATA.bookings;
   if(!progs.length){
-    document.getElementById('prog-tbody').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">Sync RGP to load live program data</td></tr>';
+    document.getElementById('prog-tbody').innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">Sync RGP to load live program data</td></tr>';
     return;
   }
   var total_rev  = progs.reduce(function(s,p){return s+p.revenue;},0);
   var total_book = progs.reduce(function(s,p){return s+p.bookings;},0);
   var total_sess = progs.reduce(function(s,p){return s+(p.sessions||0);},0);
+  var alerts_total = 0;
   document.getElementById('prog-kpis').innerHTML = [
-    {l:'Programs',           v:progs.length,                               c:'b'},
-    {l:'Sessions YTD',       v:total_sess,                                 c:'b'},
-    {l:'Total Participants', v:total_book.toLocaleString(),                c:'g'},
-    {l:'Total Revenue YTD',  v:'$'+Math.round(total_rev).toLocaleString(), c:'b'},
+    {l:'Programs',           v:progs.length,                                c:'b'},
+    {l:'Sessions YTD',       v:total_sess,                                  c:'b'},
+    {l:'Total Participants', v:total_book.toLocaleString(),                 c:'g'},
+    {l:'Total Revenue YTD',  v:'$'+Math.round(total_rev).toLocaleString(),  c:'b'},
     {l:'Cancelled',          v:progs.reduce(function(s,p){return s+p.cancelled;},0), c:'y'},
   ].map(function(k){return '<div class="kpi"><div class="kpi-label">'+k.l+'</div><div class="kpi-val '+k.c+'">'+k.v+'</div></div>';}).join('');
 
   document.getElementById('prog-tbody').innerHTML = progs.map(function(p){
-    var rev     = p.revenue || 0;
-    var cancRate = (p.cancelled && (p.bookings+p.cancelled))
-      ? Math.round(p.cancelled/(p.bookings+p.cancelled)*100)+'%' : '—';
+    var rev  = p.revenue || 0;
+    var sess = p.sessions || 0;
+    var ofr  = matchOffering(p.name);
+
+    // Fill rate: booked participants / (sessions × max capacity)
+    var maxCap      = ofr ? ofr.max : null;
+    var minCap      = ofr ? ofr.min : null;
+    var totalCap    = (maxCap && sess) ? maxCap * sess : null;
+    var fillPct     = (totalCap && p.bookings) ? Math.min(100, Math.round(p.bookings / totalCap * 100)) : null;
+    var bookedStr   = maxCap
+      ? p.bookings + ' / ' + (sess ? sess+'×'+maxCap : maxCap)
+      : p.bookings;
+
+    // Fill bar
+    var fillBar = '';
+    if(fillPct !== null){
+      var barClr = fillPct>=80 ? 'var(--grn)' : fillPct>=50 ? 'var(--yel)' : 'var(--red)';
+      fillBar = '<div style="display:flex;align-items:center;gap:5px">'
+        +'<div style="flex:1;height:8px;background:var(--bdr);border-radius:4px;min-width:40px">'
+        +'<div style="width:'+fillPct+'%;height:8px;background:'+barClr+';border-radius:4px"></div></div>'
+        +'<span style="font-size:11px;color:'+barClr+';font-weight:700;min-width:28px">'+fillPct+'%</span></div>';
+    } else {
+      fillBar = '<span style="color:var(--muted);font-size:11px">—</span>';
+    }
+
+    // Avg price vs expected
     var avgPr   = p.avg_price ? '$'+p.avg_price.toFixed(2) : '—';
-    var statusPill = rev>5000 ? '<span class="pill pill-g">Active</span>'
-      : p.bookings===0        ? '<span class="pill pill-r">No Bookings</span>'
-      :                         '<span class="pill pill-y">Low Volume</span>';
-    return '<tr>'
-      +'<td style="font-weight:700">'+p.name+'</td>'
-      +'<td style="text-align:center">'+(p.sessions||0)+'</td>'
-      +'<td style="text-align:center">'+p.bookings+'</td>'
-      +'<td style="color:var(--muted)">'+avgPr+'</td>'
-      +'<td style="color:var(--grn);font-weight:700">$'+Math.round(rev).toLocaleString()+'</td>'
-      +'<td style="color:var(--muted);text-align:center">'+p.cancelled+' ('+cancRate+')</td>'
-      +'<td>'+statusPill+'</td></tr>';
+    var expPr   = ofr && ofr.cost_ps ? '$'+ofr.cost_ps.toFixed(2)
+                : ofr && ofr.cost    ? '$'+ofr.cost.toFixed(2)+'*' : '—';
+    var priceMismatch = ofr && ofr.cost_ps && p.avg_price
+      && Math.abs(p.avg_price - ofr.cost_ps) > ofr.cost_ps * 0.15;
+
+    // Staff requirements label
+    var staffReq = '';
+    if(ofr){
+      var ts = (ofr.tiers||[]).map(function(t){return 'T'+t;}).join('+');
+      staffReq = ts + (ofr.coach ? (ts ? ' + Coach' : 'Coach') : '') + (ofr.ratio ? ' ('+ofr.ratio+')' : '');
+    }
+
+    // Alerts
+    var alertBadges = [];
+    if(fillPct !== null && fillPct < 50)
+      alertBadges.push('<span class="pill pill-r" title="Below 50% fill — needs marketing push">Low Fill</span>');
+    if(minCap && p.bookings < minCap * Math.max(1, sess))
+      alertBadges.push('<span class="pill pill-y" title="Below minimum enrollment">Under Min</span>');
+    if(priceMismatch)
+      alertBadges.push('<span class="pill pill-y" title="Avg price differs >15% from expected">Price Off</span>');
+    alerts_total += alertBadges.length;
+
+    return '<tr'+(alertBadges.length ? ' style="background:rgba(255,200,50,.04)"' : '')+'>'
+      +'<td style="font-weight:700;font-size:13px">'+p.name+'</td>'
+      +'<td style="color:var(--muted);font-size:11px">'+(ofr&&ofr.age ? ofr.age : '—')+'</td>'
+      +'<td style="text-align:center;font-size:12px">'+sess+'</td>'
+      +'<td style="font-size:12px">'+bookedStr+'</td>'
+      +'<td>'+fillBar+'</td>'
+      +'<td style="color:var(--muted);font-size:12px">'+avgPr+'</td>'
+      +'<td style="color:var(--muted);font-size:12px">'+(priceMismatch?'<span style="color:var(--yel)">':'')+expPr+(priceMismatch?'</span>':'')+'</td>'
+      +'<td style="color:var(--grn);font-weight:700;font-size:12px">$'+Math.round(rev).toLocaleString()+'</td>'
+      +'<td style="font-size:11px;color:var(--muted)">'+staffReq+'</td>'
+      +'<td>'+alertBadges.join(' ')+'</td></tr>';
   }).join('');
+
+  // Update page subtitle with alert count
+  var src = document.getElementById('prog-source');
+  if(src) src.textContent = '— live from RGP · '+(alerts_total ? alerts_total+' alert(s)' : 'all clear');
 }
 
 // Kept for backwards compatibility — the live Schedule tab is the calendar
