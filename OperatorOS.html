@@ -435,7 +435,7 @@ tr:hover td{background:var(--surf2)}
     <div class="page" id="pg-deadtime">
       <div class="pg-head">
         <div><div class="pg-title">⏱ Dead Time Engine</div><div class="pg-sub">Live from RGP check-in history — windows where you pay staff but the floor is empty</div></div>
-        <div class="pg-actions"><button class="btn btn-pri btn-sm" onclick="genSocialPost('dead_time');nav('social')">📣 Generate Promo Post</button></div>
+        <div class="pg-actions"><button class="btn btn-sm" onclick="openHowItWorks()" style="border-color:var(--acc);color:var(--acc)">ℹ️ How This Works</button><button class="btn btn-pri btn-sm" onclick="genSocialPost('dead_time');nav('social')">📣 Generate Promo Post</button></div>
       </div>
       <div class="sec">
         <div class="sec-head">Weekly Floor Heatmap <span style="font-size:11px;color:var(--muted);font-weight:400">— last 30 days of check-ins</span>
@@ -454,6 +454,39 @@ tr:hover td{background:var(--surf2)}
         </div>
       </div>
       <div class="sec"><div class="sec-head">Dead Time Opportunities</div><div id="dead-opps"></div></div>
+    </div>
+
+    <!-- HOW THIS WORKS MODAL -->
+    <div class="hiw-overlay" id="hiw-overlay" onclick="if(event.target===this)closeHowItWorks()">
+      <div class="hiw-panel">
+        <div class="hiw-head">
+          <div style="font-size:15px;font-weight:800">How the Dead Time Engine Works</div>
+          <button class="btn btn-sm" onclick="closeHowItWorks()">✕</button>
+        </div>
+        <div class="hiw-body">
+          <div class="hiw-section">
+            <div class="hiw-section-title">Reading the Heatmap</div>
+            <p>Each cell shows the estimated number of visitors during that hour block over the last 30 days. The numbers come from your RGP sales and booking timestamps — the more syncs you run, the more accurate the picture gets.</p>
+            <p>Once the RGP check-in API scope is enabled, visitor counts will be exact. Until then, estimates are derived from sales activity and program bookings.</p>
+            <div class="hiw-legend">
+              <div class="hiw-leg"><div class="hiw-dot" style="background:var(--red)"></div>Dead · 0–5 visitors</div>
+              <div class="hiw-leg"><div class="hiw-dot" style="background:var(--yel)"></div>Slow · 6–20 visitors</div>
+              <div class="hiw-leg"><div class="hiw-dot" style="background:var(--grn)"></div>Normal · 21–50 visitors</div>
+              <div class="hiw-leg"><div class="hiw-dot" style="background:var(--acc)"></div>Busy · 50+ visitors</div>
+            </div>
+          </div>
+          <div class="hiw-section">
+            <div class="hiw-section-title">Understanding Dead Time Opportunities</div>
+            <p>Opportunities are the lowest-traffic windows in your week — slots where staff costs consistently exceed the revenue those hours generate. Each one is ranked by severity.</p>
+            <p>Every opportunity has a <strong style="color:var(--txt)">Draft Post</strong> button. Click it to instantly generate a targeted promo for that specific time slot and push it to the Social Post generator, ready to schedule.</p>
+          </div>
+          <div class="hiw-section">
+            <div class="hiw-section-title">How OperatorOS Uses This</div>
+            <p>The Dead Time Engine feeds directly into your <strong style="color:var(--txt)">Actions list</strong> and <strong style="color:var(--txt)">AI Intelligence</strong> panel. The system reads your worst dead zones and automatically generates revenue recovery suggestions — flash deals, off-peak program ideas, and promo posts targeting those windows.</p>
+            <p>The more syncs you run, the sharper the patterns get and the more specific the AI recommendations become. Think of each sync as teaching the system a bit more about your gym's rhythm.</p>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- SCHEDULE -->
@@ -628,6 +661,19 @@ tr:hover td{background:var(--surf2)}
     .sched-to-row{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--bdr)}
     .sched-conflict{color:var(--red);font-size:12px;margin-top:4px;display:none}
     .staff-tab{display:none}.staff-tab.on{display:block}
+    .hiw-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:600;display:none;align-items:center;justify-content:center;padding:16px}
+    .hiw-overlay.on{display:flex}
+    .hiw-panel{background:var(--surf);border:1px solid var(--bdr2);border-radius:16px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+    .hiw-head{padding:16px 20px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between}
+    .hiw-body{padding:20px}
+    .hiw-section{margin-bottom:22px}
+    .hiw-section:last-child{margin-bottom:0}
+    .hiw-section-title{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--acc);margin-bottom:10px}
+    .hiw-section p{font-size:13px;color:var(--muted);line-height:1.6;margin:0 0 8px}
+    .hiw-section p:last-child{margin-bottom:0}
+    .hiw-legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+    .hiw-leg{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt);background:var(--surf2);border:1px solid var(--bdr);border-radius:20px;padding:4px 10px}
+    .hiw-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
     </style>
 
     <!-- SCHEDULE SHIFT PANEL -->
@@ -2323,6 +2369,9 @@ function buildAIContext(trend){
 // ═══════════════════════════════════════════════════
 // SOCIAL AUTO-PILOT
 // ═══════════════════════════════════════════════════
+function openHowItWorks(){document.getElementById('hiw-overlay').classList.add('on');}
+function closeHowItWorks(){document.getElementById('hiw-overlay').classList.remove('on');}
+
 function genSocialPost(type){
   if(!CONFIG_STATUS.claude){ showToast('Add Claude API key in Settings','wa'); nav('settings'); return; }
   var prompts = {

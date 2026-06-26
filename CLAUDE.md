@@ -12,15 +12,15 @@ It is also designed as a future SaaS product to sell to other climbing gyms (the
 
 | Location | Purpose |
 |----------|---------|
-| `E:\IMPACT CLIMBING Dropbox\kyle Wilson\2.0\APP\operatoros-proxy` | **Git repo** — edit all code here |
-| `E:\IMPACT CLIMBING Dropbox\kyle Wilson\2.0\APP\ASPIRE OS new` | **Local launcher copy** — NOT a git repo; mirrored from the repo |
+| `E:\IMPACT CLIMBING Dropbox\kyle Wilson\2.0\APP\operatoros-proxy` | **Git repo — single source of truth.** Edit AND launch from here. |
+| `E:\IMPACT CLIMBING Dropbox\kyle Wilson\2.0\APP\ASPIRE OS new` | **DEPRECATED copy.** No longer launched. Its `LAUNCH_OperatorOS.bat` now just forwards to the repo launcher. Safe to delete once you're confident. |
 | `https://github.com/KYLEW4444/operatoros-proxy.git` | Remote origin |
 | Railway project `industrious-upliftment` | Hosted proxy deployment |
 
 ### Mandatory Workflow
 
 1. Edit files in `operatoros-proxy/`
-2. Claude's PostToolUse hook auto-mirrors `OperatorOS.html` and `rgp_proxy.py` to `ASPIRE OS new/` via `~/.claude/mirror_operatoros.py`
+2. Launch directly from the repo with `LAUNCH_OperatorOS.bat` (it is self-locating via `%~dp0`, so it always runs the repo's own `OperatorOS.html` + `rgp_proxy.py`). No mirror step — the old `ASPIRE OS new` copy caused stale-launch bugs and is no longer used.
 3. Commit/push only when explicitly asked (`railway up` to deploy — `git push` alone does NOT auto-deploy)
 
 ---
@@ -57,6 +57,13 @@ rgp_proxy.py  [Railway: 0.0.0.0:PORT  /  Local: 127.0.0.1:5001]
 
 Railway deployed URL: `https://operatoros-proxy-production.up.railway.app`
 
+### Concurrency & Sync Robustness
+
+- The proxy uses **`ThreadingHTTPServer`** (not the single-threaded `HTTPServer`). With `protocol_version = 'HTTP/1.1'` (keep-alive), a single-threaded server let each persistent browser connection monopolize the one worker, so the burst of concurrent calls `syncAll()` fires (members, invoices, bookings, check-ins ×2, WIW) serialized and the sync appeared to hang forever. Threading lets each connection run on its own worker. `daemon_threads = True` so the process still exits cleanly.
+- **Every client data fetch goes through `pfetch(url, ms)`** (default 25s timeout via `AbortSignal.timeout`). A stuck RGP/WIW call can no longer leave a fetch pending forever, so the Sync spinner always clears.
+- **WIW is decoupled from the RGP sync.** `syncWIW()` runs independently in `syncAll()` and does NOT drive the global Sync spinner. Previously it ran only inside the RGP chain's `.finally`, so a slow/hung RGP pull left the WIW dot grey. WIW dot states: grey = not configured, yellow = syncing, green = shifts synced, red = sync failed.
+- `setSyncState(false)` runs in the RGP chain's `.finally` unconditionally — the spinner clears regardless of WIW.
+
 ---
 
 ## Credential & Security Model
@@ -91,7 +98,7 @@ ADMIN_TOKEN      Guards POST /config/set on the hosted instance
 | File | Purpose |
 |------|---------|
 | `OperatorOS.html` | The entire client app — all HTML, CSS, JS in one file. No framework, no build step. |
-| `rgp_proxy.py` | Python proxy v3.4. Runs locally or on Railway. All external API calls go through here. |
+| `rgp_proxy.py` | Python proxy v3.5. Runs locally or on Railway. All external API calls go through here. **Threaded** (`ThreadingHTTPServer`) so concurrent calls don't serialize. |
 | `rgp_proxy_config.json` | **Gitignored.** Local credentials. Copy from `rgp_proxy_config.example.json`. |
 | `watch_proxy.py` | File-watcher + supervisor: auto-restarts the proxy when source files change. |
 | `WATCH_OperatorOS.bat` | Starts the watcher (dev mode: edit → auto-restart). |
@@ -154,6 +161,12 @@ ADMIN_TOKEN      Guards POST /config/set on the hosted instance
 - Heatmap from real RGP check-in data (30 days)
 - Three static dead time opportunity items (not dynamically generated from heatmap — see known issues)
 - "Generate Promo Post" button triggers Social Auto-Pilot
+- **"How This Works" button** (top of page, next to Generate Promo Post) opens a modal with three sections:
+  1. Reading the Heatmap — explains visitor count estimates, color thresholds (Red 0–5, Orange 6–20, Green 21–50, Blue 50+), and notes data is estimated until RGP check-in API is connected
+  2. Understanding Dead Time Opportunities — explains lowest-traffic windows, staff-cost vs revenue logic, and Draft Post button
+  3. How OperatorOS Uses This — explains feed into Actions list + AI Intelligence, how syncs improve recommendations
+- Modal CSS classes: `.hiw-overlay`, `.hiw-panel`, `.hiw-section`, `.hiw-legend`, `.hiw-leg`
+- JS functions: `openHowItWorks()`, `closeHowItWorks()`
 
 ### Members Page
 - Filter: All / At Risk / Lapsed
