@@ -225,7 +225,6 @@ tr:hover td{background:var(--surf2)}
    MOBILE / RESPONSIVE
    No horizontal scroll; hamburger nav; touch-friendly
 ═══════════════════════════════════════════════════ */
-html, body { overflow-x: hidden; }
 .tbl-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
 /* Hamburger button (hidden on desktop) */
@@ -260,8 +259,7 @@ html, body { overflow-x: hidden; }
   #sidebar.open { width: 240px !important; }
 
   /* Main takes full width */
-  #wrap { flex-direction: column; }
-  #main { width: 100%; overflow-x: hidden; }
+  #main { width: 100%; max-width: 100%; }
   .page { padding: 16px; }
 
   /* Login card responsive */
@@ -1293,7 +1291,7 @@ function nav(name, el){ closeSidebar();
   var pg = document.getElementById('pg-'+name);
   if(pg) pg.classList.add('on');
   if(el) el.classList.add('on');
-  document.getElementById('sidebar').classList.add('open');
+  if(window.innerWidth > 768) document.getElementById('sidebar').classList.add('open');
   // When opening the schedule, re-render with current WIW data and kick off
   // a fresh sync so shifts are always up to date without a manual Sync click.
   if(name==='schedule'){
@@ -1307,7 +1305,7 @@ var STAFF_TILE_UNLOCKED = false;
 function goHome(){
   document.querySelectorAll('.page').forEach(function(p){p.classList.remove('on');});
   document.getElementById('pg-home').classList.add('on');
-  document.getElementById('sidebar').classList.remove('open');
+  closeSidebar();
   document.querySelectorAll('.sb-item').forEach(function(s){s.classList.remove('on');});
 }
 
