@@ -1342,6 +1342,8 @@ function renderTiles(){
 // SYNC — all data from RGP + WIW
 // ═══════════════════════════════════════════════════
 function syncAll(){
+  // Clear server cache so a manual Sync always fetches fresh data
+  pfetch(proxyURL('/cache/clear') + rgpParams(), 5000).catch(function(){});
   if(!S.rgpUser || !S.rgpKey){
     showToast('Enter RGP credentials in Settings first','wa');
     nav('settings');
@@ -1535,7 +1537,7 @@ function showHeatmapUnavailable(d){
 function loadMembers(silent){
   if(!S.rgpUser){ if(!silent) showToast('Connect RGP in Settings first','wa'); return Promise.resolve(); }
   if(!silent) showToast('Loading member roster...','');
-  return pfetch(proxyURL('/members') + rgpParams())
+  return pfetch(proxyURL('/members') + rgpParams(), 60000)
     .then(function(r){ return r.json(); })
     .then(function(d){
       DATA.members = d.members || [];
@@ -1599,7 +1601,7 @@ function renderMemberTable(members){
 
 function loadBookings(silent){
   if(!S.rgpUser){ if(!silent) showToast('Connect RGP in Settings first','wa'); return Promise.resolve(); }
-  return pfetch(proxyURL('/bookings/summary') + rgpParams())
+  return pfetch(proxyURL('/bookings/summary') + rgpParams(), 120000)
     .then(function(r){ return r.json(); })
     .then(function(d){
       DATA.bookings = d.programs || [];

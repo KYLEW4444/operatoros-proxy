@@ -82,6 +82,28 @@ def wiw_error_message(payload, fallback='WIW request failed'):
     except Exception:
         return fallback
 
+
+# ── Response cache ─────────────────────────────────────────────────────────
+# Slow endpoints (/bookings/summary = ~60s, /members = ~20s) are cached
+# server-side for 20 minutes so repeated calls from the UI return instantly.
+CACHE_TTL = 20 * 60   # seconds
+_cache_lock = threading.Lock()
+_response_cache = {}  # key -> {'ts': timestamp, 'data': payload_bytes}
+
+def cache_key(path, u, fc):
+    return f"{path}|{u}|{fc}"
+
+def cache_get(key):
+    with _cache_lock:
+        entry = _response_cache.get(key)
+        if entry and (time.time() - entry['ts']) < CACHE_TTL:
+            return entry['data']
+    return None
+
+def cache_set(key, data):
+    with _cache_lock:
+        _response_cache[key] = {'ts': time.time(), 'data': data}
+
 CORS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -104,6 +126,21 @@ def send_json(handler, code, body, extra_headers=None):
     handler.send_header('Expires', '0')
     for k, v in (extra_headers or {}).items():
         handler.send_header(k, v)
+    handler.send_header('Content-Length', len(data))
+    handler.end_headers()
+    handler.wfile.write(data)
+
+def send_cached(handler, code, body, cache_key_val):
+    """Send a JSON response AND store it in the response cache."""
+    data = json.dumps(body, default=str).encode()
+    cache_set(cache_key_val, (code, body))
+    handler.send_response(code)
+    for k, v in CORS.items():
+        handler.send_header(k, v)
+    handler.send_header('Content-Type', 'application/json')
+    handler.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+    handler.send_header('Pragma', 'no-cache')
+    handler.send_header('Expires', '0')
     handler.send_header('Content-Length', len(data))
     handler.end_headers()
     handler.wfile.write(data)
@@ -592,6 +629,11 @@ class Handler(BaseHTTPRequestHandler):
         # desc, then stops early once all records are >2 years old (all active
         # members will have been seen long before that point).
         if path == '/members':
+            ck = cache_key('/members', u, fc)
+            cached = cache_get(ck)
+            if cached:
+                send_json(self, cached[0], cached[1])
+                return
             today       = datetime.date.today()
             cutoff_30   = today - datetime.timedelta(days=30)
             cutoff_60   = today - datetime.timedelta(days=60)
@@ -676,7 +718,8 @@ class Handler(BaseHTTPRequestHandler):
                     'visits_total':  c.get('visitCount', 0) or 0,
                     'is_billable':   bool(c.get('isBillable')),
                 })
-            send_json(self, 200, {'members': members, 'total': len(members)})
+            payload = {'members': members, 'total': len(members)}
+            send_cached(self, 200, payload, cache_key('/members', u, fc))
             return
 
         # BOOKINGS/SUMMARY — RGP returns bookings oldest-first and ignores both
@@ -684,6 +727,11 @@ class Handler(BaseHTTPRequestHandler):
         # get the total page count, then fetch the LAST 40 pages (most recent
         # ~4 000 bookings) and filter client-side to the current year.
         if path == '/bookings/summary':
+            ck = cache_key('/bookings/summary', u, fc)
+            cached = cache_get(ck)
+            if cached:
+                send_json(self, cached[0], cached[1])
+                return
             today      = datetime.date.today()
             year_start = today.replace(month=1, day=1).isoformat()
             all_raw    = []
@@ -761,12 +809,21 @@ class Handler(BaseHTTPRequestHandler):
                     'max_per_booking': p['max_session'],
                 })
             summary.sort(key=lambda x: x['revenue'], reverse=True)
-            send_json(self, 200, {
+            bk_payload = {
                 'programs':       summary,
                 'total_programs': len(summary),
                 'total_bookings': sum(p['bookings'] for p in summary),
                 'year':           today.year,
-            })
+            }
+            send_cached(self, 200, bk_payload, cache_key('/bookings/summary', u, fc))
+            return
+
+        # CACHE CLEAR — force-expire cached members/bookings so next Sync fetches fresh
+        if path == '/cache/clear':
+            with _cache_lock:
+                cleared = len(_response_cache)
+                _response_cache.clear()
+            send_json(self, 200, {'cleared': cleared, 'message': 'Cache cleared — next sync will fetch fresh data'})
             return
 
         # RAW BOOKING DEBUG — shows exact field names from RGP
