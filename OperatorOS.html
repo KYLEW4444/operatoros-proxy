@@ -1751,8 +1751,8 @@ function loadRevenue(silent){
     DATA.dashboard.revenue_30d = d.total_revenue || 0;
     setTodayInvoices(d);
     // Revenue this month from YTD breakdown
-    var monthRev = ytd.by_month ? (ytd.by_month[curMonth] || 0) : 0;
-    var ytdRev   = ytd.ytd_revenue || 0;
+    var monthRev = ytd.by_month_net ? (ytd.by_month_net[curMonth] || 0) : (ytd.by_month ? (ytd.by_month[curMonth] || 0) : 0);
+    var ytdRev   = ytd.net_revenue || ytd.ytd_revenue || 0;
     DATA.dashboard.revenue_ytd = ytdRev;
     var todayRev = d.today_revenue || 0;
     var todayCnt = d.today_count  != null ? d.today_count : 0;

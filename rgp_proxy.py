@@ -641,31 +641,29 @@ class Handler(BaseHTTPRequestHandler):
             cutoff_2yr_str = cutoff_2yr.isoformat()
 
             def calc_status(c):
-                # RGP's authoritative field is 'currentStatus' (not 'status').
                 rgp_status = str(c.get('currentStatus') or '').upper()
-                if rgp_status in ('TERMINATED',):
+                if rgp_status == 'TERMINATED':
                     return 'TERMINATED'
                 if rgp_status == 'FROZEN':
-                    return 'FROZEN'   # paused — still active per user request
-                # Derive from membership expiry date
+                    return 'FROZEN'
+                if rgp_status == 'OK':
+                    return 'OK'  # trust RGP's own status — monthly members have no future expiry date
+                # Only check expiry/visits when RGP status isn't explicitly set
                 exp = str(c.get('membershipExpDate') or '')
                 if exp and exp not in ('0000-00-00', '', 'None'):
                     try:
                         exp_date = datetime.date.fromisoformat(exp[:10])
-                        if exp_date < today:
-                            return 'EXPIRED'
-                        return 'OK'
+                        if exp_date >= today:
+                            return 'OK'
                     except: pass
-                # Fallback: derive from last visit
                 lv = str(c.get('lastVisitDate') or '')
                 if lv and lv not in ('0000-00-00', '', 'None'):
                     try:
                         lv_date = datetime.date.fromisoformat(lv[:10])
-                        if lv_date >= cutoff_30: return 'OK'
-                        if lv_date >= cutoff_60: return 'AT_RISK'
+                        if lv_date >= cutoff_30: return 'AT_RISK'
+                        if lv_date >= cutoff_60: return 'LAPSED'
                         return 'LAPSED'
                     except: pass
-                if rgp_status == 'OK': return 'OK'
                 return 'UNKNOWN'
 
             all_members = []
@@ -870,11 +868,16 @@ class Handler(BaseHTTPRequestHandler):
                             f'{start_30} 00:00:00', f'{today_str} 23:59:59', 'invoices')
             # Filter out voided invoices for accurate revenue.
             valid = [i for i in raw if not i.get('voidedInvoice', 0)]
-            total_rev = sum(float(i.get('amount', 0) or 0) for i in valid)
-            today_count = sum(1 for i in valid
-                              if str(i.get('invoicePostDate', ''))[:10] == today_str)
-            today_rev = round(sum(float(i.get('amount', 0) or 0) for i in valid
-                                  if str(i.get('invoicePostDate', ''))[:10] == today_str), 2)
+            total_rev     = sum(float(i.get('amount', 0) or 0) for i in valid)
+            total_tax     = sum(float(i.get('salesTax', 0) or 0) for i in valid)
+            net_rev       = round(total_rev - total_tax, 2)
+            today_count   = sum(1 for i in valid
+                                if str(i.get('invoicePostDate', ''))[:10] == today_str)
+            today_amt     = sum(float(i.get('amount', 0) or 0) for i in valid
+                                if str(i.get('invoicePostDate', ''))[:10] == today_str)
+            today_tax_sum = sum(float(i.get('salesTax', 0) or 0) for i in valid
+                                if str(i.get('invoicePostDate', ''))[:10] == today_str)
+            today_rev     = round(today_amt - today_tax_sum, 2)
             def inv_description(i):
                 items = i.get('items') or []
                 descs = [it.get('description','').strip() for it in items if it.get('description','').strip()]
@@ -892,14 +895,16 @@ class Handler(BaseHTTPRequestHandler):
             } for i in raw]
             invoices.sort(key=lambda x: x['date'], reverse=True)  # newest first
             inv_payload = {
-                'invoices': invoices,
-                'total': len(invoices),
-                'valid_count': len(valid),
-                'total_revenue': round(total_rev, 2),
-                'today_count': today_count,
+                'invoices':      invoices,
+                'total':         len(invoices),
+                'valid_count':   len(valid),
+                'total_revenue': net_rev,
+                'total_gross':   round(total_rev, 2),
+                'total_tax':     round(total_tax, 2),
+                'today_count':   today_count,
                 'today_revenue': today_rev,
-                'date_start': start_30,
-                'date_end': today_str,
+                'date_start':    start_30,
+                'date_end':      today_str,
             }
             send_cached(self, 200, inv_payload, cache_key('/invoices', u, fc))
             return
@@ -977,20 +982,29 @@ class Handler(BaseHTTPRequestHandler):
                             f'{year_start.isoformat()} 00:00:00',
                             f'{today.isoformat()} 23:59:59', 'invoices')
             valid = [i for i in raw if not i.get('voidedInvoice', 0)]
-            total_ytd = round(sum(float(i.get('amount', 0) or 0) for i in valid), 2)
+            total_ytd     = round(sum(float(i.get('amount', 0) or 0) for i in valid), 2)
+            total_ytd_tax = round(sum(float(i.get('salesTax', 0) or 0) for i in valid), 2)
+            net_ytd       = round(total_ytd - total_ytd_tax, 2)
             today_str = today.isoformat()
             by_month = {}
+            by_month_net = {}
             for i in valid:
-                dt = str(i.get('invoicePostDate', ''))[:7]  # YYYY-MM
+                dt  = str(i.get('invoicePostDate', ''))[:7]
+                amt = float(i.get('amount', 0) or 0)
+                tax = float(i.get('salesTax', 0) or 0)
                 if dt:
-                    by_month[dt] = round(by_month.get(dt, 0) + float(i.get('amount', 0) or 0), 2)
+                    by_month[dt]     = round(by_month.get(dt, 0) + amt, 2)
+                    by_month_net[dt] = round(by_month_net.get(dt, 0) + amt - tax, 2)
             ytd_payload = {
-                'year':        today.year,
-                'ytd_revenue': total_ytd,
-                'ytd_invoices': len(valid),
-                'by_month':    by_month,
-                'date_start':  year_start.isoformat(),
-                'date_end':    today_str,
+                'year':          today.year,
+                'ytd_revenue':   total_ytd,
+                'ytd_tax':       total_ytd_tax,
+                'net_revenue':   net_ytd,
+                'ytd_invoices':  len(valid),
+                'by_month':      by_month,
+                'by_month_net':  by_month_net,
+                'date_start':    year_start.isoformat(),
+                'date_end':      today_str,
             }
             send_cached(self, 200, ytd_payload, cache_key('/intel/ytd', u, fc))
             return
