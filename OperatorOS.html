@@ -803,7 +803,7 @@ tr:hover td{background:var(--surf2)}
       <div class="sec">
         <div class="sec-head">Recent Invoices <span id="rev-source" style="font-size:11px;color:var(--muted);font-weight:400"></span></div>
         <div style="overflow-x:auto">
-          <div class="tbl-scroll"><table><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Tax</th><th>Source</th></tr></thead>
+          <div class="tbl-scroll"><table><thead><tr><th>Date</th><th>Type</th><th>Purchased</th><th>Amount</th><th>Tax</th><th>Source</th></tr></thead>
           <tbody id="rev-tbody"></tbody></table></div>
         </div>
       </div>
@@ -1744,23 +1744,19 @@ function loadRevenue(silent){
     var todayRev = d.today_revenue || 0;
     var todayCnt = d.today_count  != null ? d.today_count : 0;
     var zr = document.getElementById('z-rev'); if(zr) zr.textContent = ytdRev > 0 ? '$'+Math.round(ytdRev/1000)+'K' : '—';
+    var mnLabel = now.toLocaleString('en',{month:'long'})+' '+now.getFullYear();
     document.getElementById('rev-kpis').innerHTML = [
-      {l:'Revenue This Month', v:'$'+Math.round(monthRev).toLocaleString(), c:'b', sub:now.toLocaleString('en',{month:'long'})+' '+now.getFullYear()},
-      {l:'Today Revenue',      v:'$'+Math.round(todayRev).toLocaleString(), c:'g', sub:''},
-      {l:'Today Invoices',     v:todayCnt,                                  c:'g', sub:''},
-      {l:'Revenue YTD',        v:'$'+Math.round(ytdRev).toLocaleString(),   c:'b', sub:(ytd.ytd_invoices||0)+' invoices · Jan 1 – today'},
-    ].map(function(k){return '<div class="kpi"><div class="kpi-label">'+k.l+'</div><div class="kpi-val '+(k.c||'')+'">'+k.v+'</div>'+(k.sub?'<div class="kpi-sub">'+k.sub+'</div>':'')+'</div>';}).join('');
-    document.getElementById('rev-source').textContent = '— last 30 days live from RGP';
-    document.getElementById('rev-tbody').innerHTML = DATA.invoices.slice(0,100).map(function(inv){
-      var dt = inv.date ? inv.date.split(' ')[0] : '—';
-      var voided = inv.voided ? '<span style="color:var(--red);font-size:10px"> VOID</span>' : '';
-      return '<tr>'
-        +'<td style="color:var(--muted);font-size:12px">'+dt+'</td>'
-        +'<td><span class="pill pill-b">'+(inv.type||'—')+'</span>'+voided+'</td>'
-        +'<td style="color:'+(inv.voided?'var(--red)':'var(--grn)')+';font-weight:700">$'+parseFloat(inv.amount||0).toFixed(2)+'</td>'
-        +'<td style="color:var(--muted)">$'+parseFloat(inv.tax||0).toFixed(2)+'</td>'
-        +'<td style="color:var(--muted);font-size:12px">'+(inv.source||'—')+'</td></tr>';
+      {l:'Revenue This Month', v:'$'+Math.round(monthRev).toLocaleString(), c:'b', sub:mnLabel,     filter:'month'},
+      {l:'Today Revenue',      v:'$'+Math.round(todayRev).toLocaleString(), c:'g', sub:'',          filter:'today'},
+      {l:'Today Invoices',     v:todayCnt,                                  c:'g', sub:'',          filter:'today'},
+      {l:'Revenue YTD',        v:'$'+Math.round(ytdRev).toLocaleString(),   c:'b', sub:(ytd.ytd_invoices||0)+' invoices · Jan 1 – today', filter:'all'},
+    ].map(function(k){
+      return '<div class="kpi" data-filter="'+k.filter+'" onclick="filterRevenue(this.dataset.filter,this)" style="cursor:pointer;border-bottom:2px solid transparent;transition:border-color .15s">'
+        +'<div class="kpi-label">'+k.l+'</div><div class="kpi-val '+(k.c||'')+'">'+k.v+'</div>'
+        +(k.sub?'<div class="kpi-sub">'+k.sub+'</div>':'')+'</div>';
     }).join('');
+    document.getElementById('rev-source').textContent = '— last 30 days · tap a card to filter';
+    document.getElementById('rev-tbody').innerHTML = DATA.invoices.slice(0,100).map(renderInvRow).join('');
     if(!silent) showToast('✓ Revenue data loaded','ok');
   }).catch(function(e){ if(!silent) showToast('Revenue load failed','er'); });
 }
@@ -1768,6 +1764,28 @@ function loadRevenue(silent){
 function loadRevenueYTD(silent){
   // Now rolled into loadRevenue() — kept as stub so any lingering calls are no-ops
   return Promise.resolve();
+}
+
+function filterRevenue(type, el){
+  // Deselect all KPI cards
+  document.querySelectorAll('#rev-kpis .kpi').forEach(function(k){
+    k.classList.remove('rev-on'); k.style.borderColor='transparent';
+  });
+  if(el){ el.classList.add('rev-on'); el.style.borderColor='var(--acc)'; }
+  var now = new Date();
+  var todayStr  = now.toISOString().slice(0,10);
+  var monthPfx  = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  var list;
+  if(type==='today'){
+    list = DATA.invoices.filter(function(i){ return (i.date||'').slice(0,10)===todayStr; });
+  } else if(type==='month'){
+    list = DATA.invoices.filter(function(i){ return (i.date||'').slice(0,7)===monthPfx; });
+  } else {
+    list = DATA.invoices;
+  }
+  var src = document.getElementById('rev-source');
+  if(src) src.textContent = '— '+list.length+' invoice'+(list.length!==1?'s':'')+' shown';
+  document.getElementById('rev-tbody').innerHTML = list.slice(0,200).map(renderInvRow).join('');
 }
 
 // ═══════════════════════════════════════════════════

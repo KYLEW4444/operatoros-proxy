@@ -870,9 +870,15 @@ class Handler(BaseHTTPRequestHandler):
                               if str(i.get('invoicePostDate', ''))[:10] == today_str)
             today_rev = round(sum(float(i.get('amount', 0) or 0) for i in valid
                                   if str(i.get('invoicePostDate', ''))[:10] == today_str), 2)
+            def inv_description(i):
+                items = i.get('items') or []
+                descs = [it.get('description','').strip() for it in items if it.get('description','').strip()]
+                return ' + '.join(descs) if descs else (i.get('memo','').strip() or '')
+
             invoices = [{
                 'date':    i.get('invoicePostDate', ''),
                 'type':    i.get('invtype', ''),
+                'desc':    inv_description(i),
                 'amount':  float(i.get('amount', 0) or 0),
                 'tax':     float(i.get('salesTax', 0) or 0),
                 'source':  (i.get('payment') or {}).get('source', ''),
