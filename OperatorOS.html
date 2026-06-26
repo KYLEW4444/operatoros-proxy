@@ -220,6 +220,92 @@ tr:hover td{background:var(--surf2)}
 /* LOADING */
 .loading{display:flex;align-items:center;gap:8px;padding:20px;color:var(--muted);font-size:13px}
 .loading-spin{width:14px;height:14px;border:2px solid var(--bdr);border-top-color:var(--acc);border-radius:50%;animation:sp .7s linear infinite}
+
+/* ═══════════════════════════════════════════════════
+   MOBILE / RESPONSIVE
+   No horizontal scroll; hamburger nav; touch-friendly
+═══════════════════════════════════════════════════ */
+html, body { overflow-x: hidden; }
+.tbl-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* Hamburger button (hidden on desktop) */
+#ham-btn {
+  display: none;
+  background: none; border: none; color: var(--txt); cursor: pointer;
+  font-size: 20px; line-height: 1; padding: 6px; margin-right: 4px; flex-shrink: 0;
+}
+
+/* Sidebar backdrop (mobile only) */
+#sb-backdrop {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 199;
+}
+#sb-backdrop.on { display: block; }
+
+@media (max-width: 768px) {
+  /* Topbar */
+  #ham-btn { display: block; }
+  #topbar { padding: 0 12px; gap: 8px; height: 50px; }
+  .tb-gym { display: none; }
+  .tb-label { display: none; }
+  .tb-ask { display: none; }
+  .tb-btn { padding: 6px 10px; font-size: 11px; }
+
+  /* Sidebar becomes full-height overlay drawer */
+  #sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 200;
+    width: 0 !important; transition: width .22s ease;
+    padding-top: 50px; border-right: 1px solid var(--bdr);
+    overflow-y: auto; overflow-x: hidden;
+  }
+  #sidebar.open { width: 240px !important; }
+
+  /* Main takes full width */
+  #wrap { flex-direction: column; }
+  #main { width: 100%; overflow-x: hidden; }
+  .page { padding: 16px; }
+
+  /* Login card responsive */
+  .lcard { width: 92vw; padding: 32px 20px; }
+  .pinrow { gap: 8px; }
+  .pind { width: 44px; height: 54px; font-size: 22px; }
+
+  /* KPIs 2 columns on mobile */
+  .kpis { grid-template-columns: repeat(2, 1fr); }
+  #rev-kpis { grid-template-columns: repeat(2, 1fr); }
+  #prog-kpis { grid-template-columns: repeat(2, 1fr); }
+
+  /* Zone cards 2 columns */
+  .zones { grid-template-columns: repeat(2, 1fr); }
+
+  /* Tile grid 2 columns */
+  .tile-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .tile { padding: 16px 14px; }
+  .tile-icon { font-size: 24px; margin-bottom: 8px; }
+  .tile-name { font-size: 14px; }
+
+  /* Page header stack vertically */
+  .pg-head { flex-direction: column; gap: 10px; align-items: flex-start; }
+  .pg-actions { flex-wrap: wrap; }
+
+  /* field-row single column */
+  .field-row { grid-template-columns: 1fr; }
+
+  /* Chat panel full-screen on mobile */
+  #chat.open { width: 100vw; position: fixed; top: 50px; bottom: 0; left: 0; z-index: 300; }
+
+  /* Section body padding reduced */
+  .sec-body { padding: 12px; }
+
+  /* KPI values smaller on mobile */
+  .kpi-val { font-size: 20px; }
+  .zone-val { font-size: 22px; }
+}
+
+@media (max-width: 420px) {
+  .zones { grid-template-columns: 1fr 1fr; }
+  .tile-grid { grid-template-columns: 1fr 1fr; }
+}
+
 </style>
 </head>
 <body>
@@ -247,6 +333,7 @@ tr:hover td{background:var(--surf2)}
 
 <!-- TOPBAR -->
 <div id="topbar">
+  <button id="ham-btn" onclick="toggleSidebar()" aria-label="Menu">☰</button>
   <div class="tb-logo" onclick="goHome()">Operator<span>OS</span></div>
   <div class="tb-gym" id="tb-gym">—</div>
   <div class="tb-sp"></div>
@@ -257,6 +344,9 @@ tr:hover td{background:var(--surf2)}
   <button class="tb-btn tb-sync" id="sync-btn" onclick="syncAll()">⟳ Sync</button>
   <button class="tb-btn tb-ask" onclick="toggleChat()">💬 Ask AI</button>
 </div>
+
+<!-- SIDEBAR BACKDROP -->
+<div id="sb-backdrop" onclick="closeSidebar()"></div>
 
 <!-- MAIN -->
 <div id="wrap">
@@ -623,8 +713,8 @@ tr:hover td{background:var(--surf2)}
       <div class="sec">
         <div class="sec-head">Program Performance <span style="font-size:11px;color:var(--muted);font-weight:400" id="prog-source"></span></div>
         <div style="overflow-x:auto">
-          <table><thead><tr><th>Program</th><th>Age</th><th>Sessions</th><th>Booked / Max</th><th>Fill %</th><th>Avg Price</th><th>Expected</th><th>Revenue YTD</th><th>Staff Req</th><th>Alerts</th></tr></thead>
-          <tbody id="prog-tbody"></tbody></table>
+          <div class="tbl-scroll"><table><thead><tr><th>Program</th><th>Age</th><th>Sessions</th><th>Booked / Max</th><th>Fill %</th><th>Avg Price</th><th>Expected</th><th>Revenue YTD</th><th>Staff Req</th><th>Alerts</th></tr></thead>
+          <tbody id="prog-tbody"></tbody></table></div>
         </div>
       </div>
     </div>
@@ -673,8 +763,8 @@ tr:hover td{background:var(--surf2)}
         <div class="sec">
           <div class="sec-head">Labor vs Revenue by Program <span style="font-size:11px;color:var(--muted);font-weight:400">— live RGP program revenue vs scheduled labor</span></div>
           <div style="overflow-x:auto">
-            <table><thead><tr><th>Program</th><th>Scheduled Hours</th><th>Labor Cost</th><th>RGP Revenue</th><th>Margin</th></tr></thead>
-            <tbody id="lc-by-program"></tbody></table>
+            <div class="tbl-scroll"><table><thead><tr><th>Program</th><th>Scheduled Hours</th><th>Labor Cost</th><th>RGP Revenue</th><th>Margin</th></tr></thead>
+            <tbody id="lc-by-program"></tbody></table></div>
           </div>
         </div>
       </div>
@@ -702,8 +792,8 @@ tr:hover td{background:var(--surf2)}
       <div class="sec">
         <div class="sec-head">Member Roster <span id="member-count" style="font-size:11px;color:var(--muted);font-weight:400"></span></div>
         <div style="overflow-x:auto">
-          <table><thead><tr><th>Name</th><th>Membership</th><th>Status</th><th>Last Visit</th><th>Joined</th><th>Health</th></tr></thead>
-          <tbody id="member-tbody"></tbody></table>
+          <div class="tbl-scroll"><table><thead><tr><th>Name</th><th>Membership</th><th>Status</th><th>Last Visit</th><th>Joined</th><th>Health</th></tr></thead>
+          <tbody id="member-tbody"></tbody></table></div>
         </div>
       </div>
     </div>
@@ -718,8 +808,8 @@ tr:hover td{background:var(--surf2)}
       <div class="sec">
         <div class="sec-head">Recent Invoices <span id="rev-source" style="font-size:11px;color:var(--muted);font-weight:400"></span></div>
         <div style="overflow-x:auto">
-          <table><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Tax</th><th>Source</th></tr></thead>
-          <tbody id="rev-tbody"></tbody></table>
+          <div class="tbl-scroll"><table><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Tax</th><th>Source</th></tr></thead>
+          <tbody id="rev-tbody"></tbody></table></div>
         </div>
       </div>
     </div>
@@ -1189,7 +1279,7 @@ function se(id,val){ var el=document.getElementById(id); if(el) el.value=val||''
 // ═══════════════════════════════════════════════════
 // NAVIGATION
 // ═══════════════════════════════════════════════════
-function nav(name, el){
+function nav(name, el){ closeSidebar();
   if(name==='staff' && !STAFF_TILE_UNLOCKED){
     var pin = prompt('Enter owner PIN to view Staff:');
     if(pin !== S.pinOwner){
@@ -2262,6 +2352,17 @@ function aiCall(prompt, maxTokens){
 // ═══════════════════════════════════════════════════
 // CHAT
 // ═══════════════════════════════════════════════════
+function toggleSidebar(){
+  var sb = document.getElementById('sidebar');
+  var bd = document.getElementById('sb-backdrop');
+  var isOpen = sb.classList.contains('open');
+  if(isOpen){ closeSidebar(); }
+  else{ sb.classList.add('open'); bd.classList.add('on'); }
+}
+function closeSidebar(){
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sb-backdrop').classList.remove('on');
+}
 function toggleChat(){ document.getElementById('chat').classList.toggle('open'); }
 function askQ(el){ document.getElementById('chat-in').value=el.textContent; sendChat(); }
 
