@@ -623,7 +623,7 @@ tr:hover td{background:var(--surf2)}
       <div class="sec">
         <div class="sec-head">Program Performance <span style="font-size:11px;color:var(--muted);font-weight:400" id="prog-source"></span></div>
         <div style="overflow-x:auto">
-          <table><thead><tr><th>Program</th><th>Bookings</th><th>Revenue</th><th>Cancelled</th><th>Status</th></tr></thead>
+          <table><thead><tr><th>Program</th><th>Sessions (YTD)</th><th>Booked</th><th>Avg Price</th><th>Total Revenue</th><th>Cancelled</th><th>Status</th></tr></thead>
           <tbody id="prog-tbody"></tbody></table>
         </div>
       </div>
@@ -1301,7 +1301,7 @@ function loadDashboard(){
     .then(function(r){ return r.json(); })
     .then(function(d){
       var members = d.members || [];
-      var active  = members.filter(function(m){return m.status==='OK';});
+      var active  = members.filter(function(m){return m.status==='OK'||m.status==='FROZEN';});
       var cutoff  = new Date(); cutoff.setDate(cutoff.getDate()-30);
       var atRisk  = active.filter(function(m){
         if(!m.last_visit) return true;
@@ -1394,7 +1394,8 @@ function loadMembers(silent){
     .then(function(r){ return r.json(); })
     .then(function(d){
       DATA.members = d.members || [];
-      var active  = DATA.members.filter(function(m){return m.status==='OK';});
+      // FROZEN = paused membership — still active per owner preference
+      var active  = DATA.members.filter(function(m){return m.status==='OK'||m.status==='FROZEN';});
       var lapsed  = DATA.members.filter(function(m){return m.status==='TERMINATED'||m.status==='EXPIRED'||m.status==='LAPSED';});
       var cutoff  = new Date(); cutoff.setDate(cutoff.getDate()-30);
       var atRisk  = active.filter(function(m){
@@ -1402,13 +1403,15 @@ function loadMembers(silent){
         return new Date(m.last_visit) < cutoff;
       });
       DATA.atRisk = atRisk;
-      document.getElementById('m-active').textContent  = active.length;
+      var frozen = DATA.members.filter(function(m){return m.status==='FROZEN';});
+      document.getElementById('m-active').textContent  = active.length + (frozen.length?' ('+frozen.length+' paused)':'');
       document.getElementById('m-risk').textContent    = atRisk.length;
       document.getElementById('m-lapsed').textContent  = lapsed.length;
       document.getElementById('z-risk').textContent    = atRisk.length;
-      document.getElementById('member-count').textContent = '— '+DATA.members.length+' total';
+      document.getElementById('z-active').textContent  = active.length;
+      document.getElementById('member-count').textContent = '— '+DATA.members.length+' loaded (scroll shows top 2000 by recent visit)';
       renderMemberTable(DATA.members);
-      if(!silent) showToast('✓ '+DATA.members.length+' members loaded','ok');
+      if(!silent) showToast('✓ '+DATA.members.length+' members loaded — '+active.length+' active','ok');
     })
     .catch(function(e){ if(!silent) showToast('Member load failed: '+e.message,'er'); });
 }
@@ -1434,13 +1437,14 @@ function renderMemberTable(members){
     var lv = m.last_visit ? new Date(m.last_visit).toLocaleDateString('en-CA',{month:'short',day:'numeric',year:'numeric'}) : '—';
     var jd = m.join_date  ? new Date(m.join_date).toLocaleDateString('en-CA',{month:'short',year:'numeric'}) : '—';
     var health = m.status==='OK' ? '<span class="tag tag-g">Active</span>'
+      : m.status==='FROZEN' ? '<span class="tag tag-b">Paused</span>'
       : m.status==='AT_RISK' ? '<span class="tag tag-y">At Risk</span>'
-      : m.status==='FROZEN' ? '<span class="tag tag-b">Frozen</span>'
-      : m.status==='UNKNOWN' ? '<span class="tag tag-y">At Risk</span>'
+      : m.status==='UNKNOWN' ? '<span class="tag tag-y">Unknown</span>'
       : '<span class="tag tag-r">Lapsed</span>';
+    var expiry = m.membership_exp ? ' · exp '+m.membership_exp.slice(0,10) : '';
     return '<tr>'
       +'<td style="font-weight:700">'+m.first_name+' '+m.last_name+'</td>'
-      +'<td style="color:var(--muted);font-size:12px">'+(m.membership||'—')+'</td>'
+      +'<td style="color:var(--muted);font-size:12px">'+(m.membership||'—')+expiry+'</td>'
       +'<td><span class="pill '+statusCls+'">'+m.status+'</span></td>'
       +'<td style="color:var(--muted);font-size:12px">'+lv+'</td>'
       +'<td style="color:var(--muted);font-size:12px">'+jd+'</td>'
@@ -1465,25 +1469,35 @@ function loadBookings(silent){
 function renderPrograms(){
   var progs = DATA.bookings;
   if(!progs.length){
-    document.getElementById('prog-tbody').innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">Sync RGP to load live program data</td></tr>';
+    document.getElementById('prog-tbody').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">Sync RGP to load live program data</td></tr>';
     return;
   }
-  var total_rev = progs.reduce(function(s,p){return s+p.revenue;},0);
+  var total_rev  = progs.reduce(function(s,p){return s+p.revenue;},0);
   var total_book = progs.reduce(function(s,p){return s+p.bookings;},0);
+  var total_sess = progs.reduce(function(s,p){return s+(p.sessions||0);},0);
   document.getElementById('prog-kpis').innerHTML = [
-    {l:'Programs',v:progs.length,c:'b'},
-    {l:'Total Bookings',v:total_book,c:'g'},
-    {l:'Total Revenue',v:'$'+Math.round(total_rev).toLocaleString(),c:'b'},
-    {l:'Cancelled',v:progs.reduce(function(s,p){return s+p.cancelled;},0),c:'y'},
+    {l:'Programs',           v:progs.length,                               c:'b'},
+    {l:'Sessions YTD',       v:total_sess,                                 c:'b'},
+    {l:'Total Participants', v:total_book.toLocaleString(),                c:'g'},
+    {l:'Total Revenue YTD',  v:'$'+Math.round(total_rev).toLocaleString(), c:'b'},
+    {l:'Cancelled',          v:progs.reduce(function(s,p){return s+p.cancelled;},0), c:'y'},
   ].map(function(k){return '<div class="kpi"><div class="kpi-label">'+k.l+'</div><div class="kpi-val '+k.c+'">'+k.v+'</div></div>';}).join('');
 
   document.getElementById('prog-tbody').innerHTML = progs.map(function(p){
-    var statusPill = p.revenue>5000?'<span class="pill pill-g">Growing</span>':p.bookings===0?'<span class="pill pill-r">Dead</span>':'<span class="pill pill-y">Monitor</span>';
+    var rev     = p.revenue || 0;
+    var cancRate = (p.cancelled && (p.bookings+p.cancelled))
+      ? Math.round(p.cancelled/(p.bookings+p.cancelled)*100)+'%' : '—';
+    var avgPr   = p.avg_price ? '$'+p.avg_price.toFixed(2) : '—';
+    var statusPill = rev>5000 ? '<span class="pill pill-g">Active</span>'
+      : p.bookings===0        ? '<span class="pill pill-r">No Bookings</span>'
+      :                         '<span class="pill pill-y">Low Volume</span>';
     return '<tr>'
       +'<td style="font-weight:700">'+p.name+'</td>'
-      +'<td>'+p.bookings+'</td>'
-      +'<td style="color:var(--grn)">$'+Math.round(p.revenue).toLocaleString()+'</td>'
-      +'<td style="color:var(--muted)">'+p.cancelled+'</td>'
+      +'<td style="text-align:center">'+(p.sessions||0)+'</td>'
+      +'<td style="text-align:center">'+p.bookings+'</td>'
+      +'<td style="color:var(--muted)">'+avgPr+'</td>'
+      +'<td style="color:var(--grn);font-weight:700">$'+Math.round(rev).toLocaleString()+'</td>'
+      +'<td style="color:var(--muted);text-align:center">'+p.cancelled+' ('+cancRate+')</td>'
       +'<td>'+statusPill+'</td></tr>';
   }).join('');
 }

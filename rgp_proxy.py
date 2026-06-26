@@ -588,91 +588,192 @@ class Handler(BaseHTTPRequestHandler):
             send_json(self, 401, {'error': 'No RGP credentials found. Check rgp_proxy_config.json'})
             return
 
-        # MEMBERS — Nicole confirmed: /v1/customers/facility/{facilityCode}
+        # MEMBERS — paginates up to 20 pages (2000 records) ordered by lastVisitDate
+        # desc, then stops early once all records are >2 years old (all active
+        # members will have been seen long before that point).
         if path == '/members':
-            # Sort by most recent visit to get active members first
-            s, d = rgp_get(f'/v1/customers/facility/{fc}', u, k, {
-                'orderBy': 'lastVisitDate',
-                'orderDir': 'desc',
-                'pageSize': 500,  # Get top 500 most recent visitors
-            })
-            if s == 200:
-                raw = d.get('customers', d.get('customer', d.get('data', d.get('results', []))))
+            today       = datetime.date.today()
+            cutoff_30   = today - datetime.timedelta(days=30)
+            cutoff_60   = today - datetime.timedelta(days=60)
+            cutoff_2yr  = today - datetime.timedelta(days=730)
+            cutoff_2yr_str = cutoff_2yr.isoformat()
+
+            def calc_status(c):
+                # RGP's authoritative field is 'currentStatus' (not 'status').
+                rgp_status = str(c.get('currentStatus') or '').upper()
+                if rgp_status in ('TERMINATED',):
+                    return 'TERMINATED'
+                if rgp_status == 'FROZEN':
+                    return 'FROZEN'   # paused — still active per user request
+                # Derive from membership expiry date
+                exp = str(c.get('membershipExpDate') or '')
+                if exp and exp not in ('0000-00-00', '', 'None'):
+                    try:
+                        exp_date = datetime.date.fromisoformat(exp[:10])
+                        if exp_date < today:
+                            return 'EXPIRED'
+                        return 'OK'
+                    except: pass
+                # Fallback: derive from last visit
+                lv = str(c.get('lastVisitDate') or '')
+                if lv and lv not in ('0000-00-00', '', 'None'):
+                    try:
+                        lv_date = datetime.date.fromisoformat(lv[:10])
+                        if lv_date >= cutoff_30: return 'OK'
+                        if lv_date >= cutoff_60: return 'AT_RISK'
+                        return 'LAPSED'
+                    except: pass
+                if rgp_status == 'OK': return 'OK'
+                return 'UNKNOWN'
+
+            all_members = []
+            last_error  = None
+            for page in range(1, 21):   # max 20 pages = 2000 customers
+                s, d = rgp_get(f'/v1/customers/facility/{fc}', u, k, {
+                    'orderBy':  'lastVisitDate',
+                    'orderDir': 'desc',
+                    'pageSize': 100,
+                    'page':     page,
+                })
+                if s != 200:
+                    last_error = d
+                    break
+                raw = d.get('customers', d.get('customer', d.get('data', [])))
                 if isinstance(raw, dict): raw = list(raw.values())
-                today = datetime.date.today()
-                cutoff_30 = today - datetime.timedelta(days=30)
-                cutoff_60 = today - datetime.timedelta(days=60)
+                if not raw: break
+                all_members.extend(raw)
+                # Stop once all records on this page are older than 2 years
+                latest_lv = max(
+                    (str(c.get('lastVisitDate') or '')[:10] for c in raw),
+                    default=''
+                )
+                if latest_lv and latest_lv < cutoff_2yr_str:
+                    break
+                paging = d.get('rgpApiPaging') or {}
+                try:
+                    if page >= int(paging.get('pageTotal', page)):
+                        break
+                except: pass
 
-                def calc_status(c):
-                    exp = c.get('membership_exp', c.get('membershipExpDate', c.get('expirationDate', '')))
-                    lv  = c.get('last_visit', c.get('lastVisitDate', c.get('lastVisit', '')))
-                    raw_status = c.get('status', c.get('customerStatus', ''))
-                    if raw_status in ('TERMINATED', 'FROZEN', 'EXPIRED'):
-                        return raw_status
-                    # Derive from expiry date
-                    if exp and exp not in ('0000-00-00', '', None):
-                        try:
-                            exp_date = datetime.date.fromisoformat(str(exp)[:10])
-                            if exp_date < today:
-                                return 'EXPIRED'
-                            return 'OK'
-                        except: pass
-                    # Derive from last visit
-                    if lv and lv not in ('0000-00-00', '', None):
-                        try:
-                            lv_date = datetime.date.fromisoformat(str(lv)[:10])
-                            if lv_date >= cutoff_30:
-                                return 'OK'
-                            if lv_date >= cutoff_60:
-                                return 'AT_RISK'
-                            return 'LAPSED'
-                        except: pass
-                    return 'UNKNOWN'
+            if not all_members and last_error:
+                send_json(self, 500, {'error': last_error, 'path_tried': f'/v1/customers/facility/{fc}'})
+                return
 
-                members = [{
-                    'id':            c.get('id', c.get('guid', c.get('customerGuid', ''))),
-                    'first_name':    c.get('first_name', c.get('firstName', '')),
-                    'last_name':     c.get('last_name', c.get('lastName', '')),
+            members = []
+            for c in all_members:
+                status = calc_status(c)
+                exp    = str(c.get('membershipExpDate') or '')
+                members.append({
+                    'id':            c.get('customerGuid', c.get('customerId', '')),
+                    'first_name':    c.get('firstName', ''),
+                    'last_name':     c.get('lastName', ''),
                     'email':         c.get('email', ''),
-                    'status':        calc_status(c),
-                    'membership':    c.get('membership', c.get('membershipName', '')),
-                    'membership_exp':c.get('membership_exp', c.get('membershipExpDate', c.get('expirationDate', ''))),
-                    'last_visit':    c.get('last_visit', c.get('lastVisitDate', c.get('lastVisit', ''))),
-                    'join_date':     c.get('join_date', c.get('joinDate', c.get('createdDate', ''))),
-                    'visits_total':  c.get('visits_total', c.get('visitCount', c.get('totalVisits', 0))),
-                } for c in raw]
-                send_json(self, 200, {'members': members, 'total': len(members), 'raw_keys': list(d.keys())})
-            else:
-                send_json(self, s, {'error': d, 'path_tried': f'/v1/customers/facility/{fc}'})
+                    'status':        status,
+                    'membership':    c.get('membershipName') or ('Active' if status in ('OK','FROZEN') else ''),
+                    'membership_exp': exp if exp not in ('0000-00-00', '', 'None') else '',
+                    'last_visit':    str(c.get('lastVisitDate') or ''),
+                    'join_date':     str(c.get('membershipStartDate') or c.get('firstContactDate') or ''),
+                    'visits_total':  c.get('visitCount', 0) or 0,
+                    'is_billable':   bool(c.get('isBillable')),
+                })
+            send_json(self, 200, {'members': members, 'total': len(members)})
             return
 
-        # BOOKINGS — Nicole confirmed: /v1/bookings/facility/{facilityCode}
+        # BOOKINGS/SUMMARY — paginate ALL bookings for the current year, filtering
+        # client-side by bookingDate since RGP ignores startDate/endDate for this
+        # endpoint.  RGP max page size = 100; we stop when a short page is
+        # returned or we've passed the year boundary.
         if path == '/bookings/summary':
-            today    = datetime.date.today().isoformat()
-            start_yr = datetime.date(datetime.date.today().year, 1, 1).isoformat()
-            s, d = rgp_get(f'/v1/bookings/facility/{fc}', u, k, {
-                'startDate': start_yr,
-                'endDate':   today,
-                'orderBy':   'bookingDate',
-                'orderDir':  'desc',
-                'pageSize':  500,
+            today      = datetime.date.today()
+            year_start = today.replace(month=1, day=1).isoformat()
+            all_raw    = []
+            last_error = None
+            for page in range(1, 201):   # safety cap: 200 pages = 20 000 bookings
+                s, d = rgp_get(f'/v1/bookings/facility/{fc}', u, k, {
+                    'startDate': year_start,
+                    'endDate':   today.isoformat(),
+                    'orderBy':   'bookingDate',
+                    'orderDir':  'desc',
+                    'pageSize':  100,
+                    'page':      page,
+                })
+                if s != 200:
+                    last_error = d
+                    break
+                recs = d.get('bookings', d.get('booking', d.get('data', [])))
+                if isinstance(recs, dict): recs = list(recs.values())
+                if not recs: break
+                # Filter client-side by bookingDate to stay within the year
+                year_recs = [b for b in recs
+                             if str(b.get('bookingDate') or '')[:10] >= year_start]
+                all_raw.extend(year_recs)
+                # If the oldest record on this page is before this year, we're done
+                oldest = min((str(b.get('bookingDate') or '')[:10] for b in recs), default='')
+                if oldest and oldest < year_start:
+                    break
+                paging = d.get('rgpApiPaging') or {}
+                try:
+                    if page >= int(paging.get('pageTotal', page)):
+                        break
+                except: pass
+                if len(recs) < 100:
+                    break
+
+            if not all_raw and last_error:
+                send_json(self, 500, {'error': last_error, 'path_tried': f'/v1/bookings/facility/{fc}'})
+                return
+
+            programs = {}
+            for b in all_raw:
+                name = (b.get('originalBookedOfferingName') or b.get('offeringName')
+                        or b.get('courseName') or b.get('name') or 'Unknown')
+                if name not in programs:
+                    programs[name] = {
+                        'name':         name,
+                        'bookings':     0,   # confirmed participant slots
+                        'cancelled':    0,
+                        'revenue':      0.0,
+                        'price_list':   [],  # individual prices for avg calc
+                        'sessions':     set(),  # distinct session times
+                        'max_session':  0,   # largest single-booking participant count
+                    }
+                p = programs[name]
+                is_cancelled = (b.get('cancelled') == 1
+                                or str(b.get('cancellationStatus','')).upper() in ('CANCELLED','CANCELED'))
+                pax   = int(b.get('participantCount', 1) or 1)
+                price = float(b.get('price', 0) or 0)
+                slot  = str(b.get('originalBookedTime') or b.get('bookingDate') or '')[:16]
+                if is_cancelled:
+                    p['cancelled'] += 1
+                else:
+                    p['bookings'] += pax
+                    p['revenue']  += price
+                    if price > 0:
+                        p['price_list'].append(price / pax if pax > 1 else price)
+                    if slot:
+                        p['sessions'].add(slot)
+                    if pax > p['max_session']:
+                        p['max_session'] = pax
+
+            summary = []
+            for p in programs.values():
+                avg_price = round(sum(p['price_list']) / len(p['price_list']), 2) if p['price_list'] else 0
+                summary.append({
+                    'name':         p['name'],
+                    'bookings':     p['bookings'],
+                    'cancelled':    p['cancelled'],
+                    'revenue':      round(p['revenue'], 2),
+                    'sessions':     len(p['sessions']),
+                    'avg_price':    avg_price,
+                    'max_per_booking': p['max_session'],
+                })
+            summary.sort(key=lambda x: x['revenue'], reverse=True)
+            send_json(self, 200, {
+                'programs':       summary,
+                'total_programs': len(summary),
+                'total_bookings': sum(p['bookings'] for p in summary),
+                'year':           today.year,
             })
-            if s == 200:
-                raw = d.get('bookings', d.get('booking', d.get('data', [])))
-                programs = {}
-                for b in raw:
-                    name = (b.get('originalBookedOfferingName') or b.get('offeringName') or b.get('courseName') or b.get('name') or 'Unknown')
-                    if name not in programs:
-                        programs[name] = {'name': name, 'bookings': 0, 'cancelled': 0, 'revenue': 0.0}
-                    if b.get('cancelled') == 1 or str(b.get('cancellationStatus','')).upper() in ('CANCELLED','CANCELED'):
-                        programs[name]['cancelled'] += 1
-                    else:
-                        programs[name]['bookings'] += int(b.get('participantCount', b.get('quantity', 1)) or 1)
-                        programs[name]['revenue']  += float(b.get('price', b.get('amount', 0)) or 0)
-                summary = sorted(programs.values(), key=lambda x: x['revenue'], reverse=True)
-                send_json(self, 200, {'programs': summary, 'total_programs': len(summary), 'raw_keys': list(d.keys())})
-            else:
-                send_json(self, s, {'error': d, 'path_tried': f'/v1/bookings/facility/{fc}'})
             return
 
         # RAW BOOKING DEBUG — shows exact field names from RGP
