@@ -1,5 +1,29 @@
 # OperatorOS — Complete Project Guide
 
+---
+
+## 🔒 LOCKED CODE — DO NOT MODIFY WITHOUT EXPLICIT INSTRUCTION
+
+The following revenue logic is confirmed correct and must not be changed unless Kyle explicitly asks:
+
+### Revenue Calculation (rgp_proxy.py)
+- **`/intel/ytd`**: fetches all YTD invoices with `max_pages=100` (44 pages for 2026). Returns `net_revenue` (amount − salesTax), `ytd_tax`, `by_month_net`, `by_month`. Verified against actual RGP figures: net = $601,287.63 vs actual $601,288 (±$0.37 rounding only).
+- **`/invoices`**: returns `total_revenue` as net pre-tax (`amount − salesTax`), `total_gross`, `total_tax`, `today_revenue` as net pre-tax.
+- **Key insight**: RGP `amount` field includes HST. `salesTax` is the exact tax portion. `amount − salesTax` = pre-tax net sales. Verified via `items[].isTaxItem` cross-check.
+- **Page limit**: `fetch_all` default is `max_pages=40` (8,000 invoices). YTD explicitly passes `max_pages=100` to cover all 8,620+ invoices. Do NOT revert this to the default.
+
+### Revenue Display (OperatorOS.html — `loadRevenue()`)
+- `monthRev` uses `ytd.by_month_net[curMonth]` (pre-tax monthly figure)
+- `ytdRev` uses `ytd.net_revenue` (pre-tax YTD total)
+- Fallback chain preserved: `ytd.net_revenue || ytd.ytd_revenue || 0`
+
+### Member Status (rgp_proxy.py — `calc_status()`)
+- `currentStatus = 'OK'` from RGP is trusted directly — checked BEFORE expiry date logic
+- Monthly-recurring members have no future expiry date; trusting RGP's own status gives correct 704 active count
+- Order: TERMINATED → FROZEN → OK → expiry date fallback → visit date fallback → UNKNOWN
+
+---
+
 ## What This Is
 
 OperatorOS is a gym intelligence platform built for Aspire Climbing (Milton + Whitby, Ontario). It pulls live data from RockGymPro (RGP) and When I Work (WIW), runs AI analysis via Claude, and gives the operator a single dashboard to manage members, revenue, programs, staff scheduling, and dead time.
