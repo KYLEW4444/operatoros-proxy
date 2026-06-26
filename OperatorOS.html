@@ -1724,6 +1724,19 @@ function renderPrograms(){
 // grid (schedRenderCal), which now renders WIW shifts alongside local shifts.
 function renderSchedule(){ schedRenderCal(); }
 
+function renderInvRow(inv){
+  var dt = inv.date ? inv.date.split(' ')[0] : '—';
+  var voided = inv.voided ? '<span style="color:var(--red);font-size:10px"> VOID</span>' : '';
+  var desc = inv.desc || inv.memo || '—';
+  return '<tr>'
+    +'<td style="color:var(--muted);font-size:12px">'+dt+'</td>'
+    +'<td><span class="pill pill-b" style="font-size:10px">'+(inv.type||'—')+'</span>'+voided+'</td>'
+    +'<td style="font-size:12px;max-width:180px">'+desc+'</td>'
+    +'<td style="color:'+(inv.voided?'var(--red)':'var(--grn)')+';font-weight:700">$'+parseFloat(inv.amount||0).toFixed(2)+'</td>'
+    +'<td style="color:var(--muted)">$'+parseFloat(inv.tax||0).toFixed(2)+'</td>'
+    +'<td style="color:var(--muted);font-size:12px">'+(inv.source||'—')+'</td></tr>';
+}
+
 function loadRevenue(silent){
   if(!S.rgpUser){ if(!silent) showToast('Connect RGP in Settings first','wa'); return Promise.resolve(); }
   var now = new Date();
