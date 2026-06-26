@@ -1730,7 +1730,7 @@ function loadRevenue(silent){
   var curMonth = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
   return Promise.all([
     pfetch(proxyURL('/invoices') + rgpParams()).then(function(r){return r.json();}),
-    pfetch(proxyURL('/intel/ytd') + rgpParams()).then(function(r){return r.json();}).catch(function(){return {};})
+    pfetch(proxyURL('/intel/ytd') + rgpParams(), 120000).then(function(r){return r.json();}).catch(function(){return {};})
   ]).then(function(results){
     var d   = results[0];
     var ytd = results[1];

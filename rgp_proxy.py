@@ -858,6 +858,11 @@ class Handler(BaseHTTPRequestHandler):
         # were silently ignored, so the endpoint returned the OLDEST invoices
         # (2016) instead of the last 30 days. fetch_all uses the correct params.
         if path == '/invoices':
+            ck_inv = cache_key('/invoices', u, fc)
+            cached_inv = cache_get(ck_inv)
+            if cached_inv:
+                send_json(self, cached_inv[0], cached_inv[1])
+                return
             today     = datetime.date.today()
             today_str = today.isoformat()
             start_30  = (today - datetime.timedelta(days=30)).isoformat()
@@ -886,7 +891,7 @@ class Handler(BaseHTTPRequestHandler):
                 'memo':    i.get('memo', ''),
             } for i in raw]
             invoices.sort(key=lambda x: x['date'], reverse=True)  # newest first
-            send_json(self, 200, {
+            inv_payload = {
                 'invoices': invoices,
                 'total': len(invoices),
                 'valid_count': len(valid),
@@ -895,7 +900,8 @@ class Handler(BaseHTTPRequestHandler):
                 'today_revenue': today_rev,
                 'date_start': start_30,
                 'date_end': today_str,
-            })
+            }
+            send_cached(self, 200, inv_payload, cache_key('/invoices', u, fc))
             return
 
         # INTELLIGENCE — this month vs last month, for trend comparison
@@ -960,6 +966,11 @@ class Handler(BaseHTTPRequestHandler):
 
         # REVENUE YTD — all non-voided invoices from Jan 1 to today
         if path == '/intel/ytd':
+            ck_ytd = cache_key('/intel/ytd', u, fc)
+            cached_ytd = cache_get(ck_ytd)
+            if cached_ytd:
+                send_json(self, cached_ytd[0], cached_ytd[1])
+                return
             today     = datetime.date.today()
             year_start = today.replace(month=1, day=1)
             raw = fetch_all(f'/v1/invoices/facility/{fc}', u, k,
@@ -973,14 +984,15 @@ class Handler(BaseHTTPRequestHandler):
                 dt = str(i.get('invoicePostDate', ''))[:7]  # YYYY-MM
                 if dt:
                     by_month[dt] = round(by_month.get(dt, 0) + float(i.get('amount', 0) or 0), 2)
-            send_json(self, 200, {
+            ytd_payload = {
                 'year':        today.year,
                 'ytd_revenue': total_ytd,
                 'ytd_invoices': len(valid),
                 'by_month':    by_month,
                 'date_start':  year_start.isoformat(),
                 'date_end':    today_str,
-            })
+            }
+            send_cached(self, 200, ytd_payload, cache_key('/intel/ytd', u, fc))
             return
 
         # CHECKINS ACTIVE — /v1/checkins/active/facility/{fc} (takes NO query params)
