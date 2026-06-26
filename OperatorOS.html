@@ -781,7 +781,7 @@ tr:hover td{background:var(--surf2)}
         <div class="kpi" onclick="filterMembers('active',this)" title="Show active members" style="border-bottom:2px solid transparent;transition:border-color .15s" onmouseover="this.style.borderColor='var(--grn)'" onmouseout="if(!this.classList.contains('mf-on')) this.style.borderColor='transparent'"><div class="kpi-label">Active</div><div class="kpi-val g" id="m-active">—</div><div class="kpi-sub">tap to view</div></div>
         <div class="kpi" onclick="filterMembers('atrisk',this)" title="Show at-risk members" style="border-bottom:2px solid transparent;transition:border-color .15s" onmouseover="this.style.borderColor='var(--yel)'" onmouseout="if(!this.classList.contains('mf-on')) this.style.borderColor='transparent'"><div class="kpi-label">At Risk</div><div class="kpi-val y" id="m-risk">—</div><div class="kpi-sub">tap to view</div></div>
         <div class="kpi" onclick="filterMembers('lapsed',this)" title="Show lapsed members" style="border-bottom:2px solid transparent;transition:border-color .15s" onmouseover="this.style.borderColor='var(--red)'" onmouseout="if(!this.classList.contains('mf-on')) this.style.borderColor='transparent'"><div class="kpi-label">Lapsed</div><div class="kpi-val r" id="m-lapsed">—</div><div class="kpi-sub">tap to view</div></div>
-        <div class="kpi" onclick="filterMembers('now',this)" title="Show members on floor now" style="border-bottom:2px solid transparent;transition:border-color .15s" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="if(!this.classList.contains('mf-on')) this.style.borderColor='transparent'"><div class="kpi-label">On Floor Now</div><div class="kpi-val b" id="m-now">—</div><div class="kpi-sub">tap to view</div></div>
+        <div class="kpi"><div class="kpi-label">On Floor Now</div><div class="kpi-val b" id="m-now">—</div><div class="kpi-sub">live count</div></div>
         <div class="kpi"><div class="kpi-label">Today</div><div class="kpi-val b" id="m-today">—</div><div class="kpi-sub" id="m-today-sub">check-ins today</div></div>
       </div>
       <div class="sec">
@@ -1441,7 +1441,7 @@ function setTodayInvoices(d){
 
 function loadDashboard(){
   // Load members count directly from /members endpoint
-  return pfetch(proxyURL('/members') + rgpParams())
+  return pfetch(proxyURL('/members') + rgpParams(), 60000)
     .then(function(r){ return r.json(); })
     .then(function(d){
       var members = d.members || [];
@@ -1454,14 +1454,14 @@ function loadDashboard(){
       DATA.members = members;
       DATA.atRisk  = atRisk;
 
-      // Update all member counts
+      // Update all member counts (do NOT render table here — user taps a KPI card to filter)
+      var lapsed = members.filter(function(m){return m.status==='TERMINATED'||m.status==='EXPIRED'||m.status==='LAPSED';});
       document.getElementById('z-active').textContent  = active.length;
       document.getElementById('z-risk').textContent    = atRisk.length;
-      document.getElementById('m-active').textContent  = active.length;
+      document.getElementById('m-active').textContent  = active.length + (members.filter(function(m){return m.status==='FROZEN';}).length ? ' ('+members.filter(function(m){return m.status==='FROZEN';}).length+' paused)' : '');
       document.getElementById('m-risk').textContent    = atRisk.length;
-      document.getElementById('m-lapsed').textContent  = members.filter(function(m){return m.status==='TERMINATED'||m.status==='EXPIRED'||m.status==='LAPSED';}).length;
-      document.getElementById('member-count').textContent = '— '+members.length+' total';
-      renderMemberTable(members);
+      document.getElementById('m-lapsed').textContent  = lapsed.length;
+      document.getElementById('member-count').textContent = '— '+members.length+' total · tap a card above to view';
 
       // Now load revenue from invoices
       return pfetch(proxyURL('/invoices') + rgpParams());
