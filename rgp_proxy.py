@@ -980,7 +980,8 @@ class Handler(BaseHTTPRequestHandler):
             year_start = today.replace(month=1, day=1)
             raw = fetch_all(f'/v1/invoices/facility/{fc}', u, k,
                             f'{year_start.isoformat()} 00:00:00',
-                            f'{today.isoformat()} 23:59:59', 'invoices')
+                            f'{today.isoformat()} 23:59:59', 'invoices',
+                            max_pages=100)
             valid = [i for i in raw if not i.get('voidedInvoice', 0)]
             total_ytd     = round(sum(float(i.get('amount', 0) or 0) for i in valid), 2)
             total_ytd_tax = round(sum(float(i.get('salesTax', 0) or 0) for i in valid), 2)
